@@ -1,0 +1,240 @@
+.container {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #1e293b 0%, #581c87 50%, #1e293b 100%);
+    padding: 20px;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.wrapper {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding-top: 24px;
+}
+
+.title {
+    font-size: 36px;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #d8b4fe;
+    font-size: 16px;
+}
+
+.section {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.sectionTitle {
+    font-size: 24px;
+    font-weight: bold;
+    color: white;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.inputBox {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.label {
+    display: block;
+    color: #e9d5ff;
+    font-size: 14px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.input {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 16px;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.buttonGroup {
+    display: flex;
+    gap: 16px;
+}
+
+.button {
+    flex: 1;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-size: 16px;
+}
+
+.buttonActive {
+    background: #9333ea;
+    color: white;
+    box-shadow: 0 10px 30px rgba(147, 51, 234, 0.5);
+}
+
+.buttonInactive {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.hint {
+    color: #d8b4fe;
+    font-size: 14px;
+    margin-top: 12px;
+}
+
+.headerRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.addButton {
+    background: #9333ea;
+    color: white;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.emptyState {
+    text-align: center;
+    padding: 48px 0;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.itemCard {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 16px;
+}
+
+.itemHeader {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.itemHeader>select {
+    margin-left: 6px;
+    margin-right: 12px;
+}
+
+.itemTitle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.itemNumber {
+    color: white;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+.select {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+    cursor: pointer;
+}
+
+.deleteButton {
+    color: #f87171;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.3s;
+}
+
+.optionGrid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+}
+
+.optionButton {
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    border: none;
+    width: 100%;
+}
+
+.optionSelected {
+    background: rgba(147, 51, 234, 0.5);
+    border: 2px solid #a78bfa;
+}
+
+.optionUnselected {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.optionName {
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.optionInput {
+    width: 100%;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+    margin-top: 8px;
+    box-sizing: border-box;
+}
+
+
+/* 이하 rank / status / progress / rune / recommend 동일 1:1 구조 */
