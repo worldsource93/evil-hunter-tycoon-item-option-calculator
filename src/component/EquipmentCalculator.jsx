@@ -324,7 +324,7 @@ const EquipmentCalculator = () => {
   // 상태 관리
   const [targetValues, setTargetValues] = useState({
     critRate: 50,
-    atkSpeed: 50,
+    atkSpeed: 40,
     evasion: 40,
     dmgReduce: 0,
     lifesteal: 40,
@@ -334,7 +334,7 @@ const EquipmentCalculator = () => {
   // 목업 데이터 생성 함수 (주석 처리 - 테스트용)
   const generateMockData = () => {
     const mockItems = [];
-    const mockCount = 30;
+    const mockCount = 15;
     const tiers = ['태초', '혼돈', '심연'];
     const targetOptions = ['critRate', 'atkSpeed', 'evasion', 'lifesteal'];
     
@@ -379,10 +379,10 @@ const EquipmentCalculator = () => {
   //     options: {}
   //   }));
   // });
-  
   const [items, setItems] = useState(generateMockData());
   
   const [useActualValues, setUseActualValues] = useState(true);
+  const [useTestValues, setUseTestValues] = useState(true);
   const [showResults, setShowResults] = useState(false);
 
   // 아이템 추가
@@ -870,7 +870,7 @@ const EquipmentCalculator = () => {
                   type="number"
                   min="0"
                   max="100"
-                  value={targetValues[option.id]}
+                  value={targetValues[option.id] === 0 ? '' : targetValues[option.id]}
                   onChange={(e) => updateTargetValue(option.id, e.target.value)}
                   style={styles.input}
                   placeholder="0"
@@ -889,18 +889,17 @@ const EquipmentCalculator = () => {
             <button
               onClick={() => {
                 setUseActualValues(false);
-                setItems(prevItems => prevItems.map(item => {
-                  const newOptions = {};
-                  Object.keys(item.options).forEach(optionId => {
-                    const option = optionTypes.find(o => o.id === optionId);
-                    newOptions[optionId] = tierMaxValues[item.tier][option.group];
-                  });
-                  return { ...item, options: newOptions };
-                }));
+                setUseTestValues(false);
+                setItems(itemTypes.map((type, index) => ({
+                  id: Date.now() + index,
+                  tier: '태초',
+                  itemType: type,
+                  options: {}
+                })));
               }}
               style={{
                 ...styles.button,
-                ...(useActualValues ? styles.buttonInactive : styles.buttonActive)
+                ...((!useActualValues && !useTestValues) ? styles.buttonActive : styles.buttonInactive)
               }}
             >
               최대값 기준 계산
@@ -908,26 +907,40 @@ const EquipmentCalculator = () => {
             <button
               onClick={() => {
                 setUseActualValues(true);
-                setItems(prevItems => prevItems.map(item => {
-                  const newOptions = {};
-                  Object.keys(item.options).forEach(optionId => {
-                    newOptions[optionId] = 0;
-                  });
-                  return { ...item, options: newOptions };
-                }));
+                setUseTestValues(false);
+                setItems(itemTypes.map((type, index) => ({
+                  id: Date.now() + index,
+                  tier: '태초',
+                  itemType: type,
+                  options: {}
+                })));
               }}
               style={{
                 ...styles.button,
-                ...(useActualValues ? styles.buttonActive : styles.buttonInactive)
+                ...((useActualValues && !useTestValues) ? styles.buttonActive : styles.buttonInactive)
+              }}
+              >
+              실제 수치 입력
+            </button>
+            <button
+              onClick={() => {
+                setUseActualValues(true);
+                setUseTestValues(true);
+                setItems(generateMockData());
+              }}
+              style={{
+                ...styles.button,
+                ...(useActualValues && useTestValues ? styles.buttonActive : styles.buttonInactive)
               }}
             >
-              실제 수치 입력
+              테스트 해보쟝
             </button>
           </div>
           <p style={styles.hint}>
-            {useActualValues 
-              ? '💡 혼돈 장비의 계승 옵션까지 고려한 실제 수치를 입력하세요' 
-              : '💡 각 단계별 최대 수치를 기준으로 계산합니다'}
+            {
+              useActualValues && !useTestValues ? '💡 실제 장비 옵션 수치를 입력하세요' 
+              : !useActualValues && !useTestValues ? '💡 각 단계별 최대 수치를 기준으로 계산합니다'
+              : '더미 데이터로 테스트해보쟝'}
           </p>
         </div>
 
@@ -1104,10 +1117,10 @@ const EquipmentCalculator = () => {
                                   type="number"
                                   min="0"
                                   max={maxValue}
-                                  value={item.options[option.id]}
+                                  value={item.options[option.id] === 0 ? '' : item.options[option.id]}
                                   onChange={(e) => updateItemOptionValue(item.id, option.id, e.target.value)}
                                   style={styles.optionInput}
-                                  placeholder="수치 입력"
+                                  placeholder="0"
                                 />
                               ) : (
                                 <div style={styles.optionMax}>
