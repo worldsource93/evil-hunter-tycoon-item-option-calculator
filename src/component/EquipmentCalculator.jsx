@@ -323,17 +323,18 @@ const EquipmentCalculator = () => {
 
   // 상태 관리
   const [targetValues, setTargetValues] = useState({
-    critRate: 100,
+    critRate: 50,
     atkSpeed: 50,
     evasion: 40,
     dmgReduce: 0,
-    lifesteal: 50,
+    lifesteal: 40,
     moveSpeed: 0
   });
 
   // 목업 데이터 생성 함수 (주석 처리 - 테스트용)
   const generateMockData = () => {
     const mockItems = [];
+    const mockCount = 30;
     const tiers = ['태초', '혼돈', '심연'];
     const targetOptions = ['critRate', 'atkSpeed', 'evasion', 'lifesteal'];
     
@@ -341,7 +342,7 @@ const EquipmentCalculator = () => {
     const mockItemTypes = itemTypes.filter(type => type !== '무기');
     
     // 70개의 샘플 장비 생성
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < mockCount; i++) {
       const tier = tiers[Math.floor(Math.random() * tiers.length)];
       const itemType = mockItemTypes[i % mockItemTypes.length];
       const numOptions = Math.floor(Math.random() * 3) + 1; // 1~3개 옵션
@@ -370,16 +371,16 @@ const EquipmentCalculator = () => {
   };
 
   // 기본 장비 8개 세팅 (종류별 1개씩)
-  const [items, setItems] = useState(() => {
-    return itemTypes.map((type, index) => ({
-      id: Date.now() + index,
-      tier: '태초',
-      itemType: type,
-      options: {}
-    }));
-  });
+  // const [items, setItems] = useState(() => {
+  //   return itemTypes.map((type, index) => ({
+  //     id: Date.now() + index,
+  //     tier: '태초',
+  //     itemType: type,
+  //     options: {}
+  //   }));
+  // });
   
-  // const [items, setItems] = useState(generateMockData());
+  const [items, setItems] = useState(generateMockData());
   
   const [useActualValues, setUseActualValues] = useState(true);
   const [showResults, setShowResults] = useState(false);
