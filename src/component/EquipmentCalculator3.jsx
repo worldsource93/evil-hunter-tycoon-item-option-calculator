@@ -1098,7 +1098,7 @@ const EquipmentCalculator = () => {
         .value-after { color: #37352f; font-weight: 600; }
         
         .strikethrough { text-decoration: line-through; color: #9b9a97; }
-        .mcraft-value { font-weight: 600; color: #37352f; }
+        .mcraft-value { font-weight: 600; color: #fff; }
         .option-with-mcraft { white-space: nowrap; }
         
         .sim-label { font-size: 10px; color: #37352f; background: #e9e9e7; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
