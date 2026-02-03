@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const EquipmentCalculator = () => {
   // 기본 옵션 (목표 수치용)
   const baseOptionTypes = [
-    { id: 'critRate', name: '치명타확률', group: 'A' },
-    { id: 'atkSpeed', name: '공격속도', group: 'A' },
-    { id: 'evasion', name: '회피율', group: 'A' },
-    { id: 'dmgReduce', name: '받는 데미지 감소', group: 'B' },
-    { id: 'lifesteal', name: '흡혈', group: 'B' },
-    { id: 'moveSpeed', name: '이동속도', group: 'B' }
+    { id: 'critRate', name: '치명타확률', group: 'A', max: 50 },
+    { id: 'atkSpeed', name: '공격속도', group: 'A', max: 60 },
+    { id: 'evasion', name: '회피율', group: 'A', max: 40 },
+    { id: 'dmgReduce', name: '받는 데미지 감소', group: 'B', max: 100 },
+    { id: 'lifesteal', name: '흡혈', group: 'B', max: 100 },
+    { id: 'moveSpeed', name: '이동속도', group: 'B', max: 100 }
   ];
 
   // 추가 옵션 (종족/치피/전공)
@@ -1134,7 +1134,7 @@ const EquipmentCalculator = () => {
                 <input
                   type="number"
                   min="0"
-                  max="100"
+                  max={option.max}
                   value={targetValues[option.id] === 0 ? '' : targetValues[option.id]}
                   onChange={(e) => updateTargetValue(option.id, e.target.value)}
                   className="input"
