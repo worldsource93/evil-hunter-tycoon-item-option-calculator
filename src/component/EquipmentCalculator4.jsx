@@ -1193,6 +1193,7 @@ const EquipmentCalculator = () => {
                 {/* <div class="badges"> */}
                   <span class="badge-outline">만두🌸</span>
                   <span class="badge-outline">헬리🌸터</span>
+                  <span class="badge-outline">😇로소</span>
                   {/* <span class="badge-outline"><span class="dot blue"></span></span>
                   <span class="badge-outline"><span class="dot purple"></span></span>
                   <span class="badge-outline"><span class="dot orange"></span></span>
