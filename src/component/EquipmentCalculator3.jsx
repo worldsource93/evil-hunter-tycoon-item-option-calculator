@@ -954,6 +954,9 @@ const EquipmentCalculator = () => {
   return (
     <div className="eq-calc-container">
       <style>{`
+        @import url(//spoqa.github.io/spoqa-han-sans/css/SpoqaHanSansNeo.css);
+        * { font-family: 'Spoqa Han Sans Neo', 'sans-serif'; }
+
         .eq-calc-container {
           min-height: 100vh;
           background: #ffffff;
@@ -1074,7 +1077,7 @@ const EquipmentCalculator = () => {
         /* 엑셀 컨트롤 */
         .excel-control { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding: 10px 12px; background: #f7f6f3; border-radius: 3px; flex-wrap: wrap; }
         .excel-label { font-size: 12px; color: #9b9a97; }
-        .excel-upload-btn { cursor: pointer; }
+        .excel-upload-btn { cursor: pointer; text-align: center; }
         .excel-hint { font-size: 11px; color: #9b9a97; margin-left: 8px; }
         
         /* M작 시뮬레이션 스타일 */
@@ -1104,7 +1107,42 @@ const EquipmentCalculator = () => {
         .sim-label { font-size: 10px; color: #37352f; background: #e9e9e7; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
         .achievement-item.improved { background: #f7f6f3; border-color: #37352f; }
         .improve-diff { color: #37352f; font-weight: 500; }
-        
+        .name-card-box { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6px; align-items: center; }
+        .name-card-box > p { font-weight: 600; font-size: 16px; }
+        .title-wrapper { display: flex; justify-content: space-between;}
+        .helper { font-weight: 600 !important; font-size: 14px !important; }
+        .author { font-weight: 500 !important; font-size: 11px !important; }
+        .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+        .badge-outline {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-width: 60px;
+            font-size: 11px;
+            font-weight: 500;
+            padding: 3px 8px;
+            border-radius: 10px;
+            border: 1px solid #30363d;
+            color: #30363d;
+            background: transparent;
+            margin-top: 6px;
+        }
+
+        .badge-outline .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #3fb950;
+            margin-right: 6px;
+            align-self: center;
+        }
+
+        .badge-outline .dot.blue { background: #58a6ff; }
+        .badge-outline .dot.purple { background: #a371f7; }
+        .badge-outline .dot.orange { background: #d29922; }
+        .badge-outline .dot.pink { background: #db61a2; }
+
+
         @media (max-width: 480px) {
           .eq-calc-container { padding: 12px; }
           .section { padding: 12px; }
@@ -1120,7 +1158,21 @@ const EquipmentCalculator = () => {
       
       <div className="wrapper">
         <div className="header">
-          <h1 className="title">장비 옵션 계산기</h1>
+          <div className="title-wrapper">
+            <h1 className="title">장비 옵션 계산기</h1>
+            <div className="name-card-box">
+              <p className="helper">도움을 주신분</p>
+              <p className="author">(Made by Blue)</p>
+              {/* <div class="badges"> */}
+                <span class="badge-outline">만두🌸</span>
+                <span class="badge-outline">헬리🌸터</span>
+                {/* <span class="badge-outline"><span class="dot blue"></span></span>
+                <span class="badge-outline"><span class="dot purple"></span></span>
+                <span class="badge-outline"><span class="dot orange"></span></span>
+                <span class="badge-outline"><span class="dot pink"></span></span> */}
+              {/* </div> */}
+            </div>
+          </div>
           <p className="subtitle">목표 수치를 달성하면서 종족 옵션을 최대화하는 조합을 찾습니다</p>
         </div>
 
@@ -1221,7 +1273,7 @@ const EquipmentCalculator = () => {
           
           <p className="hint">
             {isTestMode 
-              ? '테스트 모드: 더미 데이터로 테스트합니다. 로컬스토리지에 저장되지 않습니다.'
+              ? '테스트 모드: 더미 데이터로 테스트합니다.'
               : useActualValues 
                 ? '실제 장비 옵션 수치를 입력합니다. 데이터가 자동 저장됩니다.' 
                 : '각 단계별 최대 수치를 기준으로 계산합니다.'}
