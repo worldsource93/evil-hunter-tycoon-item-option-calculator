@@ -1,140 +1,164 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
-const EquipmentCalculator = () => {
-  // 기본 옵션 (목표 수치용)
-  const baseOptionTypes = [
-    { id: 'critRate', name: '치명타확률', abbr: '치확', group: 'A' },
-    { id: 'atkSpeed', name: '공격속도', abbr: '공속', group: 'A' },
-    { id: 'evasion', name: '회피율', abbr: '회피', group: 'A' },
-    { id: 'dmgReduce', name: '받는 데미지 감소', abbr: '받뎀감', group: 'B' },
-    { id: 'lifesteal', name: '흡혈', abbr: '흡혈', group: 'B' },
-    { id: 'moveSpeed', name: '이동속도', abbr: '이속', group: 'B' }
-  ];
+// 기본 옵션 (목표 수치용)
+const baseOptionTypes = [
+  { id: 'critRate', name: '치명타확률', abbr: '치확', group: 'A' },
+  { id: 'atkSpeed', name: '공격속도', abbr: '공속', group: 'A' },
+  { id: 'evasion', name: '회피율', abbr: '회피', group: 'A' },
+  { id: 'dmgReduce', name: '받는 데미지 감소', abbr: '받뎀감', group: 'B' },
+  { id: 'lifesteal', name: '흡혈', abbr: '흡혈', group: 'B' },
+  { id: 'moveSpeed', name: '이동속도', abbr: '이속', group: 'B' }
+];
 
-  // 추가 옵션 (종족/치피/전공)
-  const bonusOptionTypes = [
-    { id: 'demon', name: '악마', abbr: '악마', group: 'C' },
-    { id: 'boss', name: '보스', abbr: '보스', group: 'C' },
-    { id: 'primate', name: '영장', abbr: '영장', group: 'C' },
-    { id: 'critDmg', name: '치명타피해량', abbr: '치피', group: 'C' },
-    { id: 'totalAtk', name: '전체공격력', abbr: '전공', group: 'D' }
-  ];
+// 추가 옵션 (종족/치피/전공)
+const bonusOptionTypes = [
+  { id: 'demon', name: '악마', abbr: '악마', group: 'C' },
+  { id: 'boss', name: '보스', abbr: '보스', group: 'C' },
+  { id: 'primate', name: '영장', abbr: '영장', group: 'C' },
+  { id: 'critDmg', name: '치명타피해량', abbr: '치피', group: 'C' },
+  { id: 'totalAtk', name: '전체공격력', abbr: '전공', group: 'D' }
+];
 
-  const allOptionTypes = [...baseOptionTypes, ...bonusOptionTypes];
+const allOptionTypes = [...baseOptionTypes, ...bonusOptionTypes];
 
-  // 단계별 최대 수치
-  const tierMaxValues = {
-    '태초': { A: 12, B: 17, C: 35, D: 23 },
-    '혼돈': { A: 14, B: 19, C: 40, D: 26 },
-    '심연': { A: 16, B: 21, C: 45, D: 29 },
-    '유니크': { A: 16, B: 21, C: 45, D: 29 } // 유니크는 심연급
-  };
+// 단계별 최대 수치
+const tierMaxValues = {
+  '태초': { A: 12, B: 17, C: 35, D: 23 },
+  '혼돈': { A: 14, B: 19, C: 40, D: 26 },
+  '심연': { A: 16, B: 21, C: 45, D: 29 },
+  '유니크': { A: 16, B: 21, C: 45, D: 29 } // 유니크는 심연급
+};
 
-  // 아이템 종류 정의
-  const itemTypes = ['무기', '목걸이', '반지', '벨트', '투구', '갑옷', '장갑', '신발'];
+// 아이템 종류 정의
+const itemTypes = ['무기', '목걸이', '반지', '벨트', '투구', '갑옷', '장갑', '신발'];
 
-  // 유니크 장비 정의 (고유옵션 포함)
-  const uniqueItemDefs = {
-    '갑옷': [
-      { name: '서리갑', passive: '서리파동', min: 10, max: 25, unit: '%' },
-      { name: '진서리갑', passive: '강화 서리파동', min: 10, max: 25, unit: '%' },
-      { name: '흡갑', passive: '받는 피해 감소', min: 15, max: 30, unit: '%' }
-    ],
-    '장갑': [
-      { name: '블피장', passive: '블러디 버서크', min: 1, max: 3, unit: '단' },
-      { name: '진블피장', passive: '강화 블러디 버서크', min: 1, max: 3, unit: '단' }
-    ],
-    '신발': [
-      { name: '질풍신', passive: '이속 공격력 증폭', min: 3, max: 10, unit: '%' },
-      { name: '진질풍신', passive: '이속 공격력 증폭', min: 3, max: 10, unit: '%' },
-      { name: '불굴신', passive: '받는 피해 감소', min: 30, max: 50, unit: '%' },
-      { name: '뱀부', passive: '블러드 익스플로전', min: 1, max: 3, unit: '단' }
-    ],
-    '목걸이': [
-      { name: '지던목', passive: '지하세계의 왕', min: 1, max: 3, unit: '단' },
-      { name: '진지던목', passive: '강화 지하세계의 왕', min: 1, max: 3, unit: '단' },
-      { name: '용목', passive: '용의가호', min: 1, max: 3, unit: '단' }
-    ],
-    '반지': [
-      { name: '디트링', passive: '싸이클론 지속시간', min: 2, max: 4, unit: '초' },
-      { name: '진디트링', passive: '싸이클론 지속시간', min: 4, max: 6, unit: '초' },
-      { name: '수호반지', passive: '희생의 오라', min: 1, max: 3, unit: '단' }
-    ],
-    '벨트': [
-      { name: '뇌벨', passive: '뇌룡의 분노', min: 1, max: 3, unit: '단' }
-    ]
-  };
+// 유니크 장비 정의 (고유옵션 포함)
+const uniqueItemDefs = {
+  '갑옷': [
+    { name: '서리갑', passive: '서리파동', min: 10, max: 25, unit: '%' },
+    { name: '진서리갑', passive: '강화 서리파동', min: 10, max: 25, unit: '%' },
+    { name: '흡갑', passive: '받는 피해 감소', min: 15, max: 30, unit: '%' }
+  ],
+  '장갑': [
+    { name: '블피장', passive: '블러디 버서크', min: 1, max: 3, unit: '단' },
+    { name: '진블피장', passive: '강화 블러디 버서크', min: 1, max: 3, unit: '단' }
+  ],
+  '신발': [
+    { name: '질풍신', passive: '이속 공격력 증폭', min: 3, max: 10, unit: '%' },
+    { name: '진질풍신', passive: '이속 공격력 증폭', min: 3, max: 10, unit: '%' },
+    { name: '불굴신', passive: '받는 피해 감소', min: 30, max: 50, unit: '%' },
+    { name: '뱀부', passive: '블러드 익스플로전', min: 1, max: 3, unit: '단' }
+  ],
+  '목걸이': [
+    { name: '지던목', passive: '지하세계의 왕', min: 1, max: 3, unit: '단' },
+    { name: '진지던목', passive: '강화 지하세계의 왕', min: 1, max: 3, unit: '단' },
+    { name: '용목', passive: '용의가호', min: 1, max: 3, unit: '단' }
+  ],
+  '반지': [
+    { name: '디트링', passive: '싸이클론 지속시간', min: 2, max: 4, unit: '초' },
+    { name: '진디트링', passive: '싸이클론 지속시간', min: 4, max: 6, unit: '초' },
+    { name: '수호반지', passive: '희생의 오라', min: 1, max: 3, unit: '단' }
+  ],
+  '벨트': [
+    { name: '뇌벨', passive: '뇌룡의 분노', min: 1, max: 3, unit: '단' }
+  ]
+};
 
-  // 유니크 장비 부위 매핑
-  const uniqueToItemType = {};
-  const uniqueDefMap = {};
-  Object.entries(uniqueItemDefs).forEach(([type, items]) => {
-    items.forEach(item => {
-      uniqueToItemType[item.name] = type;
-      uniqueDefMap[item.name] = item;
-    });
+// 유니크 장비 부위 매핑
+const uniqueToItemType = {};
+const uniqueDefMap = {};
+Object.entries(uniqueItemDefs).forEach(([type, items]) => {
+  items.forEach(item => {
+    uniqueToItemType[item.name] = type;
+    uniqueDefMap[item.name] = item;
   });
+});
 
-  // 모든 유니크 장비 이름 목록
-  const allUniqueNames = Object.values(uniqueItemDefs).flat().map(u => u.name);
+// 모든 유니크 장비 이름 목록
+const allUniqueNames = Object.values(uniqueItemDefs).flat().map(u => u.name);
 
-  // 룬 최대값 정의
-  const runeMaxValues = {
-    critRate: 6, atkSpeed: 6, evasion: 6,
-    dmgReduce: 12, lifesteal: 12, moveSpeed: 12
-  };
+// 룬 최대값 정의
+const runeMaxValues = {
+  critRate: 6, atkSpeed: 6, evasion: 6,
+  dmgReduce: 12, lifesteal: 12, moveSpeed: 12
+};
 
-  // 로컬스토리지 키
-  const STORAGE_KEY = 'equipment_calculator_items_v3';
-  const STORAGE_KEY_UNIQUE = 'equipment_calculator_unique_v3';
+// 로컬스토리지 키
+const STORAGE_KEY = 'equipment_calculator_items_v3';
+const STORAGE_KEY_UNIQUE = 'equipment_calculator_unique_v3';
 
+const EquipmentCalculator = () => {
   // 더미 데이터 생성
   const generateDummyData = (count = 250) => {
     const dummyItems = [];
     const tiers = ['태초', '혼돈', '심연'];
+    const raceOptions = ['demon', 'boss', 'primate'];
     const allOptions = [...baseOptionTypes, ...bonusOptionTypes];
-    
+  
     for (let i = 0; i < count; i++) {
       const tier = tiers[Math.floor(Math.random() * tiers.length)];
       const itemType = itemTypes[i % itemTypes.length];
-      const numOptions = Math.floor(Math.random() * 4) + 1;
-      
       const options = {};
       const usedOptions = new Set();
       
-      if (Math.random() < 0.7) {
-        const raceOptions = ['demon', 'boss', 'primate'];
+      // 70% 확률로 1~3티어급 (종족 포함 고효율 장비)
+      const isHighTier = Math.random() < 0.7;
+  
+      if (isHighTier) {
+        // 1. 종족 옵션 필수 포함
         const selectedRace = raceOptions[Math.floor(Math.random() * raceOptions.length)];
         const raceOpt = allOptions.find(o => o.id === selectedRace);
-        options[selectedRace] = Math.floor(tierMaxValues[tier][raceOpt.group] * (0.6 + Math.random() * 0.4));
+        options[selectedRace] = Math.floor(tierMaxValues[tier][raceOpt.group] * (0.8 + Math.random() * 0.2));
         usedOptions.add(selectedRace);
-        
-        if (numOptions >= 2 && Math.random() < 0.5) {
-          const critOpt = allOptions.find(o => o.id === 'critDmg');
-          options['critDmg'] = Math.floor(tierMaxValues[tier][critOpt.group] * (0.6 + Math.random() * 0.4));
+  
+        // 2. 추가 유효 옵션 (치피, 전공 위주)
+        const dice = Math.random();
+        if (dice < 0.4) {
+          // [종족 + 치피 + 전공] 조합 (베스트)
+          ['critDmg', 'totalAtk'].forEach(id => {
+            const opt = allOptions.find(o => o.id === id);
+            options[id] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
+            usedOptions.add(id);
+          });
+        } else if (dice < 0.7) {
+          // [종족 + 치피] 조합
+          const opt = allOptions.find(o => o.id === 'critDmg');
+          options['critDmg'] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
           usedOptions.add('critDmg');
-        }
-        
-        if (numOptions >= 3 && Math.random() < 0.4) {
-          const atkOpt = allOptions.find(o => o.id === 'totalAtk');
-          options['totalAtk'] = Math.floor(tierMaxValues[tier][atkOpt.group] * (0.6 + Math.random() * 0.4));
+        } else {
+          // [종족 + 전공] 조합
+          const opt = allOptions.find(o => o.id === 'totalAtk');
+          options['totalAtk'] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
           usedOptions.add('totalAtk');
         }
+  
+        // 3. 빈 슬롯에 목표 수치용 옵션(치확, 공속 등) 1~2개 추가
+        const extraCount = Math.floor(Math.random() * 2) + 1;
+        const targets = baseOptionTypes.filter(o => !usedOptions.has(o.id));
+        targets.sort(() => Math.random() - 0.5).slice(0, extraCount).forEach(opt => {
+          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
+          usedOptions.add(opt.id);
+        });
+  
+      } else {
+        // 30% 확률로 일반 유효 장비 (최소 2옵션 이상)
+        const numOptions = Math.floor(Math.random() * 3) + 2; // 2~4개
+        const shuffledBase = [...baseOptionTypes].sort(() => Math.random() - 0.5);
+        
+        for (let j = 0; j < numOptions; j++) {
+          const opt = shuffledBase[j];
+          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
+        }
       }
-      
-      const remainingOptions = allOptions.filter(o => !usedOptions.has(o.id));
-      const shuffled = remainingOptions.sort(() => Math.random() - 0.5);
-      
-      let currentCount = Object.keys(options).length;
-      for (const option of shuffled) {
-        if (currentCount >= numOptions) break;
-        options[option.id] = Math.floor(tierMaxValues[tier][option.group] * (0.6 + Math.random() * 0.4));
-        currentCount++;
-      }
-      
-      dummyItems.push({ id: Date.now() + i, tier, itemType, options });
+  
+      dummyItems.push({ 
+        id: Date.now() + i + Math.random(), // ID 중복 방지
+        tier, 
+        itemType, 
+        options 
+      });
     }
-    
+  
     return dummyItems;
   };
 
@@ -614,175 +638,114 @@ const EquipmentCalculator = () => {
     resetResults();
   };
 
-  // 조합 점수 계산
-  const calculateCombinationScore = useCallback((combination, raceId, withCritDmg, withTotalAtk) => {
-    let raceTotal = 0, critDmgTotal = 0, totalAtkTotal = 0, comboBonus = 0;
-    const baseTotals = {};
-    baseOptionTypes.forEach(opt => { baseTotals[opt.id] = 0; });
+  // 1. 아이템 필터링 로직: 선택한 종족 외 타 종족 아이템 완전 제거 및 압축률 기반 추출
+const getFilteredItemsByType = useCallback((raceId, withCritDmg, withTotalAtk) => {
+  const otherRaces = ['demon', 'boss', 'primate'].filter(id => id !== raceId);
+  const excludedTypes = selectedUniqueTypes;
+
+  // 필터링: 타 종족 옵션이 하나라도 붙어있으면 즉시 탈락
+  const availableItems = items.filter(item => {
+    if (excludedTypes.includes(item.itemType)) return false;
+    const hasOtherRace = otherRaces.some(race => item.options[race] !== undefined);
+    return !hasOtherRace; // 내 종족이거나 종족 옵션이 아예 없는 템만 통과
+  });
+
+  const itemsByType = {};
+  availableItems.forEach(item => {
+    if (!itemsByType[item.itemType]) itemsByType[item.itemType] = [];
     
-    combination.forEach(item => {
-      const race = item.options[raceId] || 0;
-      const crit = item.options.critDmg || 0;
-      const atk = item.options.totalAtk || 0;
-      
-      raceTotal += race;
-      critDmgTotal += crit;
-      totalAtkTotal += atk;
-      
-      baseOptionTypes.forEach(opt => {
-        baseTotals[opt.id] += item.options[opt.id] || 0;
-      });
-      
-      if (withCritDmg && withTotalAtk) {
-        if (race > 0 && crit > 0 && atk > 0) comboBonus += 500;
-        else if (race > 0 && crit > 0) comboBonus += 200;
-        else if (race > 0 && atk > 0) comboBonus += 100;
-      } else if (withCritDmg) {
-        if (race > 0 && crit > 0) comboBonus += 300;
-      } else if (withTotalAtk) {
-        if (race > 0 && atk > 0) comboBonus += 200;
+    // 후보군 선정을 위한 잠재력 점수 계산
+    let potScore = 0;
+    if (item.options[raceId]) potScore += 2000; // 종족 보유 최우선
+    if (withCritDmg && item.options.critDmg) potScore += 1000;
+    if (withTotalAtk && item.options.totalAtk) potScore += 500;
+    
+    // 유효 옵션(목표치 입력된 것)이 포함되어 있다면 점수 가산
+    baseOptionTypes.forEach(opt => {
+      if (targetValues[opt.id] > 0 && item.options[opt.id] !== undefined) {
+        potScore += 100;
       }
     });
-    
-    // 목표 달성도 계산 (룬 포함)
-    let totalShortage = 0;
-    let totalExcess = 0;
-    let targetsFullyMet = true;
-    let targetsMet = 0;
-    let totalTargets = 0;
-    
-    baseOptionTypes.forEach(option => {
-      const target = targetValues[option.id];
-      if (target > 0) {
-        totalTargets++;
-        const achieved = baseTotals[option.id];
-        const diff = target - achieved;
-        if (diff > 0) {
-          const runeMax = runeMaxValues[option.id] || 0;
-          const shortage = Math.max(0, diff - runeMax);
-          totalShortage += shortage;
-          if (shortage > 0) {
-            targetsFullyMet = false;
-          } else {
-            targetsMet++;
-          }
-        } else {
-          targetsMet++;
-          if (diff < 0) {
-            totalExcess += Math.abs(diff);
-          }
-        }
+
+    item._tempPotScore = potScore;
+    itemsByType[item.itemType].push(item);
+  });
+
+  // 부위별로 잠재력 높은 상위 20개만 탐색 (연산 효율)
+  Object.keys(itemsByType).forEach(type => {
+    itemsByType[type].sort((a, b) => b._tempPotScore - a._tempPotScore);
+    itemsByType[type] = itemsByType[type].slice(0, 20);
+  });
+
+  return itemsByType;
+}, [items, targetValues, selectedUniqueTypes]);
+
+// 2. 조합 점수 계산 로직: M작+룬 보정 필수 달성 및 옵션 압축률(개수 최소화) 반영
+const calculateCombinationScore = useCallback((combination, raceId, withCritDmg, withTotalAtk) => {
+  const potentialTotals = {};
+  baseOptionTypes.forEach(opt => { potentialTotals[opt.id] = 0; });
+  
+  let raceTotal = 0, critDmgTotal = 0, totalAtkTotal = 0;
+  let usedEffectiveOptionCount = 0; // 유효 옵션 슬롯 사용 개수
+
+  combination.forEach(item => {
+    raceTotal += (item.options[raceId] || 0);
+    critDmgTotal += (item.options.critDmg || 0);
+    totalAtkTotal += (item.options.totalAtk || 0);
+
+    // M작 기준 목표 수치 합산
+    baseOptionTypes.forEach(opt => {
+      if (item.options[opt.id] !== undefined) {
+        potentialTotals[opt.id] += tierMaxValues[item.tier][opt.group];
+        // 목표로 설정한 유효 옵션이 장비에 붙어있는 경우 카운트
+        if (targetValues[opt.id] > 0) usedEffectiveOptionCount++;
       }
     });
-    
-    // 점수 계산: 목표 달성이 최우선
-    let score = 0;
-    
-    if (!targetsFullyMet) {
-      // 목표 미달성: 
-      // 1. 달성한 목표 개수에 따른 기본 점수
-      // 2. 부족분에 따른 페널티
-      // 3. 딜러 옵션은 아주 작은 비중
-      score = targetsMet * 100000; // 달성한 목표 1개당 10만점
-      score -= totalShortage * 5000; // 부족분 1당 -5000점
-      score += raceTotal * 10;
-      if (withCritDmg) score += critDmgTotal * 8;
-      if (withTotalAtk) score += totalAtkTotal * 4;
-    } else {
-      // 모든 목표 달성: 
-      // 1. 기본 달성 보너스 (매우 높음)
-      // 2. 딜러 옵션 최대화
-      // 3. 초과분 작은 페널티
-      score = 10000000; // 1000만점 기본
-      score += raceTotal * 120;
-      if (withCritDmg) score += critDmgTotal * 100;
-      if (withTotalAtk) score += totalAtkTotal * 50;
-      score += comboBonus;
-      score -= totalExcess * 3; // 초과분 페널티 약화
+  });
+
+  // 목표 달성 여부 확인 (M작 + 룬 1개 보정)
+  let targetsMetCount = 0;
+  const activeTargetKeys = baseOptionTypes.filter(opt => targetValues[opt.id] > 0);
+  
+  activeTargetKeys.forEach(opt => {
+    const runeMax = runeMaxValues[opt.id] || 0;
+    if (potentialTotals[opt.id] + runeMax >= targetValues[opt.id]) {
+      targetsMetCount++;
     }
-    
-    return { score, raceTotal, critDmgTotal, totalAtkTotal, targetsFullyMet, totalShortage, targetsMet, totalTargets };
-  }, [targetValues]);
+  });
 
-  // 필터링
-  const getFilteredItemsByType = useCallback((raceId, withCritDmg, withTotalAtk) => {
-    // 선택된 유니크 장비 부위 제외
-    const excludedTypes = selectedUniqueTypes;
-    const availableItems = items.filter(item => !excludedTypes.includes(item.itemType));
-    
-    const itemsByType = {};
-    availableItems.forEach(item => {
-      if (!itemsByType[item.itemType]) itemsByType[item.itemType] = [];
-      itemsByType[item.itemType].push(item);
-    });
+  const allMet = targetsMetCount === activeTargetKeys.length;
+  let score = 0;
 
-    // 목표 수치가 설정된 옵션 목록
-    const targetOptions = baseOptionTypes.filter(opt => targetValues[opt.id] > 0);
+  if (!allMet) {
+    // 1순위 조건 미달성: 달성한 목표 개수에 따라 낮은 점수 부여
+    score = (targetsMetCount * 10000) - 2000000;
+  } else {
+    // 1순위 조건 달성: 기본 성공 점수
+    score = 10000000;
     
-    // 각 타입별로 다양한 기준으로 아이템 선별
-    const MAX_PER_TYPE = 20; // 더 많이 선별하여 다양한 조합 가능하게
+    // 3순위: 종족(악/영/보) 수치 반영 (가중치 최대)
+    score += raceTotal * 5000;
     
-    Object.keys(itemsByType).forEach(type => {
-      const typeItems = itemsByType[type];
-      
-      // 각 아이템에 여러 점수 계산
-      const scoredItems = typeItems.map(item => {
-        // 1. 목표 옵션 기여도 (가장 중요)
-        const targetScore = targetOptions.reduce((sum, opt) => {
-          const val = item.options[opt.id] || 0;
-          const target = targetValues[opt.id];
-          // 목표 대비 기여 비율로 점수 계산
-          return sum + (val / target) * 100;
-        }, 0);
-        
-        // 2. 딜러 옵션 점수
-        const raceVal = item.options[raceId] || 0;
-        const critVal = item.options.critDmg || 0;
-        const atkVal = item.options.totalAtk || 0;
-        let dealerScore = raceVal * 120;
-        if (withCritDmg) dealerScore += critVal * 100;
-        if (withTotalAtk) dealerScore += atkVal * 50;
-        
-        // 3. 복합 점수 (목표 기여도 * 2 + 딜러 점수)
-        // 목표 기여도에 더 높은 가중치
-        const combinedScore = targetScore * 2 + dealerScore;
-        
-        return { item, targetScore, dealerScore, combinedScore };
-      });
-      
-      // 복합 점수로 정렬
-      scoredItems.sort((a, b) => b.combinedScore - a.combinedScore);
-      
-      // 상위 아이템 선택, 단 목표 기여도 높은 아이템도 포함 보장
-      const selectedItems = new Set();
-      
-      // 먼저 복합 점수 상위 절반 선택
-      const halfMax = Math.ceil(MAX_PER_TYPE / 2);
-      scoredItems.slice(0, halfMax).forEach(s => selectedItems.add(s.item));
-      
-      // 그 다음 목표 기여도 상위 아이템 추가 (아직 선택 안된 것 중)
-      scoredItems
-        .sort((a, b) => b.targetScore - a.targetScore)
-        .forEach(s => {
-          if (selectedItems.size < MAX_PER_TYPE && !selectedItems.has(s.item)) {
-            selectedItems.add(s.item);
-          }
-        });
-      
-      // 딜러 점수 상위 아이템도 추가 (아직 선택 안된 것 중)
-      scoredItems
-        .sort((a, b) => b.dealerScore - a.dealerScore)
-        .forEach(s => {
-          if (selectedItems.size < MAX_PER_TYPE && !selectedItems.has(s.item)) {
-            selectedItems.add(s.item);
-          }
-        });
-      
-      itemsByType[type] = Array.from(selectedItems);
-    });
-    
-    return itemsByType;
-  }, [items, targetValues, selectedUniqueTypes]);
+    // 2순위: 옵션 개수 최소화 (압축률)
+    // 유효 옵션 개수가 적을수록 다른 딜러 옵션이 들어갈 자리가 많아지므로 보너스
+    score += (100 - usedEffectiveOptionCount) * 1000;
+
+    // 4순위: 치피(2등) 및 전공(3등)
+    if (withCritDmg) score += critDmgTotal * 500;
+    if (withTotalAtk) score += totalAtkTotal * 100;
+  }
+
+  return { 
+    score, 
+    raceTotal, 
+    critDmgTotal, 
+    totalAtkTotal, 
+    targetsFullyMet: allMet, 
+    targetsMet: targetsMetCount, 
+    totalTargets: activeTargetKeys.length 
+  };
+}, [targetValues, tierMaxValues, runeMaxValues]);
 
   // 최적 조합 찾기
   const findBestRaceCombination = useCallback((raceId, withCritDmg, withTotalAtk) => {
@@ -833,10 +796,22 @@ const EquipmentCalculator = () => {
     }
 
     if (!bestCombination) return null;
+// 결과 표시용: 여기서는 "현재 상태"와 "잠재 상태(M작)"을 구분해서 줄 필요가 있음
+    // 하지만 UI의 혼동을 줄이기 위해 baseTotals 계산 시 M작을 가정한 수치를 기준으로 룬 필요량을 계산해줌
+    
+    const potentialTotals = {}; // M작 기준 합계
+    const currentTotals = {};   // 현재 수치 합계
 
-    const totals = {};
     allOptionTypes.forEach(option => {
-      totals[option.id] = bestCombination.reduce((sum, item) => sum + (item.options[option.id] || 0), 0);
+      potentialTotals[option.id] = bestCombination.reduce((sum, item) => {
+        // 해당 옵션이 있으면 Max값, 없으면 0
+        if (item.options[option.id] !== undefined) {
+             return sum + tierMaxValues[item.tier][allOptionTypes.find(o=>o.id===option.id).group];
+        }
+        return sum;
+      }, 0);
+      
+      currentTotals[option.id] = bestCombination.reduce((sum, item) => sum + (item.options[option.id] || 0), 0);
     });
 
     const runeInfo = {};
@@ -845,8 +820,10 @@ const EquipmentCalculator = () => {
     baseOptionTypes.forEach(option => {
       const target = targetValues[option.id];
       if (target > 0) {
-        const achieved = totals[option.id];
-        const diff = target - achieved;
+        // 중요: 룬 필요량 계산은 'M작을 다 했을 때'를 기준으로 계산해야 함
+        const achievedMax = potentialTotals[option.id];
+        const diff = target - achievedMax;
+        
         if (diff > 0) {
           const runeMax = runeMaxValues[option.id] || 0;
           runeInfo[option.id] = { needed: Math.min(diff, runeMax), shortage: Math.max(0, diff - runeMax) };
@@ -861,10 +838,12 @@ const EquipmentCalculator = () => {
 
     return {
       items: bestCombination,
-      totals, runeInfo,
-      raceTotal: totals[raceId] || 0,
-      critDmgTotal: totals.critDmg || 0,
-      totalAtkTotal: totals.totalAtk || 0,
+      totals: currentTotals,
+      potentialTotals,
+      runeInfo,
+      raceTotal: currentTotals[raceId] || 0,
+      critDmgTotal: currentTotals.critDmg || 0,
+      totalAtkTotal: currentTotals.totalAtk || 0,
       totalShortage,
       allTargetsMet: totalShortage === 0,
       combinationsChecked,
@@ -890,12 +869,6 @@ const EquipmentCalculator = () => {
     setRaceResults(result);
     setIsCalculating(false);
   }, [items, selectedUniqueItems, includeCritDmg, includeTotalAtk, findBestRaceCombination]);
-
-  useEffect(() => {
-    if (selectedRace && !isCalculating) {
-      handleRaceSelect(selectedRace);
-    }
-  }, [includeCritDmg, includeTotalAtk]);
 
   // M작 시뮬레이션
   const toggleMCraftSimulation = (itemId) => {
@@ -970,220 +943,6 @@ const EquipmentCalculator = () => {
 
   return (
     <div className="eq-calc-container">
-      <style>{`
-        .eq-calc-container {
-          min-height: 100vh;
-          background: #ffffff;
-          padding: 16px;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-          box-sizing: border-box;
-          color: #37352f;
-        }
-        .eq-calc-container * { box-sizing: border-box; }
-        .wrapper { max-width: 960px; margin: 0 auto; }
-        .header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #e9e9e7; }
-        .title { font-size: 20px; font-weight: 600; color: #37352f; margin: 0 0 4px 0; }
-        .subtitle { color: #9b9a97; font-size: 13px; margin: 0; }
-        .section { background: #ffffff; border: 1px solid #e9e9e7; border-radius: 3px; padding: 16px; margin-bottom: 12px; }
-        .section-title { font-size: 14px; font-weight: 600; color: #37352f; margin: 0 0 12px 0; display: flex; align-items: center; gap: 8px; }
-        .section-title .badge { font-size: 11px; background: #e9e9e7; padding: 2px 6px; border-radius: 3px; font-weight: 500; }
-        .section-title .badge.selected { background: #37352f; color: #fff; }
-        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; }
-        .input-box { background: #f7f6f3; border-radius: 3px; padding: 8px 10px; }
-        .label { display: block; color: #9b9a97; font-size: 11px; margin-bottom: 4px; }
-        .input { width: 100%; padding: 6px 8px; background: #ffffff; border: 1px solid #e9e9e7; border-radius: 3px; color: #37352f; font-size: 13px; outline: none; }
-        .input:focus { border-color: #37352f; }
-        .select { padding: 6px 8px; background: #ffffff; border: 1px solid #e9e9e7; border-radius: 3px; color: #37352f; font-size: 13px; outline: none; cursor: pointer; width: 100%; }
-        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
-        .btn { flex: 1; min-width: 80px; padding: 8px 12px; border-radius: 3px; font-weight: 500; border: 1px solid #e9e9e7; cursor: pointer; transition: all 0.15s; font-size: 13px; background: #ffffff; color: #37352f; }
-        .btn:hover { background: #f7f6f3; }
-        .btn-active { background: #37352f; color: #ffffff; border-color: #37352f; }
-        .btn-active:hover { background: #2f2d2a; }
-        .btn-sm { min-width: 50px; padding: 4px 8px; font-size: 12px; flex: none; }
-        .hint { color: #9b9a97; font-size: 12px; margin-top: 8px; }
-        .form-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-        .form-row > * { flex: 1; min-width: 80px; }
-        .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; margin-bottom: 12px; }
-        .option-btn { padding: 8px; border-radius: 3px; text-align: left; cursor: pointer; transition: all 0.15s; border: 1px solid #e9e9e7; width: 100%; background: #ffffff; }
-        .option-btn:hover { background: #f7f6f3; }
-        .option-selected { background: #f7f6f3; border-color: #37352f; }
-        .option-name { color: #37352f; font-size: 11px; font-weight: 500; }
-        .option-input { width: 100%; padding: 4px 6px; background: #ffffff; border: 1px solid #e9e9e7; border-radius: 3px; color: #37352f; font-size: 12px; outline: none; margin-top: 4px; }
-        .option-max { color: #9b9a97; font-size: 10px; margin-top: 4px; }
-        .option-section-title { font-size: 11px; color: #9b9a97; margin: 8px 0 6px 0; }
-        
-        /* 고유옵션 입력 */
-        .passive-input-box { background: #f7f6f3; border-radius: 3px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid #e9e9e7; }
-        .passive-text { color: #37352f; font-size: 11px; font-weight: 500; background: #e9e9e7; padding: 2px 6px; border-radius: 3px; }
-        .unique-row.selected .passive-text { background: #555; color: #fff; }
-        
-        /* 리스트 스타일 */
-        .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-        .list-header-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .list-header-right { display: flex; gap: 6px; flex-wrap: wrap; }
-        .list-controls { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
-        .search-input { padding: 6px 10px; border: 1px solid #e9e9e7; border-radius: 3px; font-size: 12px; width: 150px; }
-        .filter-select { padding: 6px 8px; border: 1px solid #e9e9e7; border-radius: 3px; font-size: 12px; }
-        
-        .item-list-scroll { max-height: 280px; overflow-y: auto; border: 1px solid #e9e9e7; border-radius: 3px; }
-        .item-list-scroll::-webkit-scrollbar { width: 6px; }
-        .item-list-scroll::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 3px; }
-        
-        .item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #e9e9e7; font-size: 12px; }
-        .item-row:last-child { border-bottom: none; }
-        .item-row:hover { background: #f7f6f3; }
-        .item-row-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-        .item-row-right { display: flex; gap: 4px; flex-shrink: 0; }
-        .tier-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; background: #e9e9e7; color: #37352f; flex-shrink: 0; }
-        .item-type-name { font-weight: 500; flex-shrink: 0; }
-        .item-options-text { color: #9b9a97; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .card-btn { padding: 2px 6px; border-radius: 3px; font-size: 11px; cursor: pointer; border: 1px solid #e9e9e7; background: #ffffff; color: #9b9a97; }
-        .card-btn:hover { background: #f7f6f3; color: #37352f; }
-        
-        /* 유니크 장비 */
-        .unique-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #e9e9e7; font-size: 12px; }
-        .unique-row:last-child { border-bottom: none; }
-        .unique-row:hover { background: #f7f6f3; }
-        .unique-row.selected { background: #37352f; color: #fff; }
-        .unique-row.selected .tier-badge { background: #555; color: #fff; }
-        .unique-row.selected .item-options-text { color: #ccc; }
-        .unique-row.selected .card-btn { background: #555; color: #fff; border-color: #555; }
-        .unique-name { font-weight: 600; color: #37352f; }
-        .unique-row.selected .unique-name { color: #fff; }
-        .select-btn { padding: 2px 8px; border-radius: 3px; font-size: 10px; cursor: pointer; border: 1px solid #e9e9e7; background: #fff; }
-        .select-btn.selected { background: #37352f; color: #fff; border-color: #37352f; }
-        
-        .toggle-btn { background: #ffffff; color: #37352f; padding: 4px 10px; border-radius: 3px; border: 1px solid #e9e9e7; cursor: pointer; font-size: 12px; }
-        .toggle-btn:hover { background: #f7f6f3; }
-        .clear-btn { background: #ffffff; color: #9b9a97; padding: 4px 10px; border-radius: 3px; border: 1px solid #e9e9e7; cursor: pointer; font-size: 12px; }
-        .clear-btn:hover { background: #f7f6f3; color: #37352f; }
-        .item-count { color: #9b9a97; font-size: 12px; }
-        .empty-state { text-align: center; padding: 20px; color: #9b9a97; font-size: 13px; }
-        
-        /* 모드 컨트롤 */
-        .test-mode-control, .excel-control { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding: 10px 12px; background: #f7f6f3; border-radius: 3px; flex-wrap: wrap; }
-        .test-mode-label, .excel-label { font-size: 12px; color: #9b9a97; }
-        .excel-upload-btn { cursor: pointer; }
-        .excel-hint { font-size: 11px; color: #9b9a97; }
-        
-        /* 추천 */
-        .race-btn-group { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-        .race-btn { flex: 1; min-width: 70px; padding: 10px 16px; border-radius: 3px; font-weight: 500; border: 1px solid #e9e9e7; cursor: pointer; font-size: 13px; background: #ffffff; color: #37352f; }
-        .race-btn:hover { background: #f7f6f3; }
-        .race-btn.active { background: #37352f; color: #ffffff; border-color: #37352f; }
-        .race-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .crit-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f7f6f3; border-radius: 3px; margin-bottom: 12px; flex-wrap: wrap; }
-        .crit-toggle-label { font-size: 13px; color: #37352f; }
-        .crit-toggle-btn { padding: 4px 12px; border-radius: 3px; font-size: 12px; border: 1px solid #e9e9e7; cursor: pointer; background: #ffffff; color: #9b9a97; }
-        .crit-toggle-btn.active { background: #37352f; color: #ffffff; border-color: #37352f; }
-        
-        /* M작 시뮬레이션 */
-        .mcraft-control { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f7f6f3; border-radius: 3px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-        .mcraft-control-label { font-size: 13px; font-weight: 500; color: #37352f; }
-        .mcraft-control-btns { display: flex; gap: 6px; align-items: center; }
-        .mcraft-count { font-size: 12px; color: #37352f; font-weight: 500; background: #e9e9e7; padding: 2px 8px; border-radius: 3px; }
-        
-        /* 결과 */
-        .result-card { background: #f7f6f3; border-radius: 3px; padding: 14px; border: 1px solid #e9e9e7; margin-bottom: 12px; }
-        .result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-        .result-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 500; background: #37352f; color: #ffffff; }
-        .result-title { color: #37352f; font-weight: 600; font-size: 14px; }
-        .result-meta { color: #9b9a97; font-size: 12px; }
-        .result-highlight { background: #ffffff; border: 1px solid #e9e9e7; border-radius: 3px; padding: 12px; margin-bottom: 12px; }
-        .highlight-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-        .highlight-row:last-child { margin-bottom: 0; }
-        .highlight-label { font-size: 13px; color: #9b9a97; }
-        .highlight-value { font-size: 16px; font-weight: 600; color: #37352f; }
-        .value-before { color: #9b9a97; text-decoration: line-through; font-size: 14px; }
-        .value-arrow { color: #9b9a97; margin: 0 4px; }
-        .value-after { color: #37352f; font-weight: 600; }
-        
-        .sub-title { color: #9b9a97; font-size: 12px; font-weight: 500; margin-bottom: 8px; }
-        .sim-label { font-size: 10px; color: #37352f; background: #e9e9e7; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
-        
-        .selected-items { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-        .selected-item { background: #ffffff; padding: 6px 10px; border-radius: 3px; font-size: 12px; color: #37352f; border: 1px solid #e9e9e7; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; cursor: pointer; transition: all 0.15s; }
-        .selected-item:hover { background: #f7f6f3; border-color: #37352f; }
-        .selected-item.mcrafted { background: #37352f; border-color: #37352f; }
-        .selected-item.mcrafted .selected-item-name { color: #ffffff; }
-        .selected-item.mcrafted .selected-item-options { color: #d4d4d4; }
-        .selected-item.maxed { opacity: 0.6; cursor: default; }
-        .selected-item.unique { border-left: 3px solid #37352f; }
-        .selected-item-left { display: flex; align-items: center; gap: 6px; }
-        .selected-item-name { font-weight: 500; }
-        .selected-item-options { font-size: 11px; color: #9b9a97; }
-        .mcraft-badge-small { font-size: 10px; background: #ffffff; color: #37352f; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
-        .maxed-badge { font-size: 10px; background: #e9e9e7; color: #9b9a97; padding: 1px 5px; border-radius: 3px; }
-        .unique-badge { font-size: 10px; background: #37352f; color: #fff; padding: 1px 5px; border-radius: 3px; }
-        .passive-badge { font-size: 10px; background: #e9e9e7; color: #37352f; padding: 1px 5px; border-radius: 3px; }
-        .selected-item.mcrafted .passive-badge { background: #555; color: #fff; }
-        
-        .strikethrough { text-decoration: line-through; color: #9b9a97; }
-        .mcraft-value { font-weight: 600; color: #37352f; }
-        
-        .achievement-item { background: #ffffff; border-radius: 3px; padding: 10px; margin-bottom: 6px; border: 1px solid #e9e9e7; }
-        .achievement-item.improved { border-color: #37352f; }
-        .achievement-title { color: #37352f; font-weight: 500; font-size: 12px; margin-bottom: 4px; }
-        .achievement-detail { color: #9b9a97; font-size: 11px; margin-bottom: 2px; }
-        .text-success { color: #37352f; font-weight: 500; }
-        .text-warning { color: #9b9a97; }
-        .text-error { color: #37352f; text-decoration: underline; }
-        .improve-diff { color: #37352f; font-weight: 500; }
-        
-        .summary-box { margin-top: 12px; padding: 10px; border-radius: 3px; background: #ffffff; border: 1px solid #e9e9e7; }
-        .summary-box.success { border-color: #37352f; }
-        .summary-title { font-size: 12px; font-weight: 500; color: #37352f; }
-        .summary-detail { font-size: 11px; margin-top: 4px; color: #9b9a97; }
-        .loading { text-align: center; padding: 20px; color: #9b9a97; }
-        
-                .name-card-box { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6px; align-items: center; }
-        .name-card-box > p { font-weight: 600; font-size: 16px; }
-        .title-wrapper { display: flex; justify-content: space-between;}
-        .helper { font-weight: 600 !important; font-size: 14px !important; }
-        .author { font-weight: 500 !important; font-size: 11px !important; }
-        .badges { display: flex; flex-wrap: wrap; gap: 6px; }
-        .badge-outline {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-width: 60px;
-            font-size: 11px;
-            font-weight: 500;
-            padding: 3px 8px;
-            border-radius: 10px;
-            border: 1px solid #30363d;
-            color: #30363d;
-            background: transparent;
-            margin-top: 6px;
-        }
-
-        .badge-outline .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #3fb950;
-            margin-right: 6px;
-            align-self: center;
-        }
-
-        .badge-outline .dot.blue { background: #58a6ff; }
-        .badge-outline .dot.purple { background: #a371f7; }
-        .badge-outline .dot.orange { background: #d29922; }
-        .badge-outline .dot.pink { background: #db61a2; }
-
-        @media (max-width: 480px) {
-          .eq-calc-container { padding: 12px; }
-          .section { padding: 12px; }
-          .form-row > * { min-width: 100%; }
-          .btn-group { flex-direction: column; }
-          .btn { min-width: 100%; }
-          .search-input { width: 100%; }
-          .list-header { flex-direction: column; align-items: flex-start; }
-          .list-header-right { width: 100%; justify-content: space-between; }
-          .race-btn-group { flex-direction: column; }
-        }
-      `}</style>
-      
       <div className="wrapper">
         <div className="header">
             <div className="title-wrapper">
@@ -1192,9 +951,9 @@ const EquipmentCalculator = () => {
                 <p className="helper">도움을 주신분</p>
                 <p className="author">(Made by Blue)</p>
                 {/* <div class="badges"> */}
-                  <span class="badge-outline">만두🌸</span>
-                  <span class="badge-outline">헬리🌸터</span>
-                  <span class="badge-outline">😇로소</span>
+                  <span className="badge-outline">만두🌸</span>
+                  <span className="badge-outline">헬리🌸터</span>
+                  <span className="badge-outline">😇로소</span>
                   {/* <span class="badge-outline"><span class="dot blue"></span></span>
                   <span class="badge-outline"><span class="dot purple"></span></span>
                   <span class="badge-outline"><span class="dot orange"></span></span>
