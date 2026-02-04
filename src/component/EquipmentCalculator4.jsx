@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+
+// ===== 상수 정의 (컴포넌트 외부) =====
 
 // 기본 옵션 (목표 수치용)
 const baseOptionTypes = [
@@ -10,29 +12,53 @@ const baseOptionTypes = [
   { id: 'moveSpeed', name: '이동속도', abbr: '이속', group: 'B' }
 ];
 
-// 추가 옵션 (종족/치피/전공)
+// 딜러 옵션 (종족/치피/전공)
 const bonusOptionTypes = [
   { id: 'demon', name: '악마', abbr: '악마', group: 'C' },
   { id: 'boss', name: '보스', abbr: '보스', group: 'C' },
   { id: 'primate', name: '영장', abbr: '영장', group: 'C' },
   { id: 'critDmg', name: '치명타피해량', abbr: '치피', group: 'C' },
-  { id: 'totalAtk', name: '전체공격력', abbr: '전공', group: 'D' }
+  { id: 'totalAtk', name: '전체공격력', abbr: '전공', group: 'D' },
+  { id: 'health', name: '체력', abbr: '체력', group: 'D' },
+  { id: 'depend', name: '방어', abbr: '방어', group: 'D' },
 ];
 
 const allOptionTypes = [...baseOptionTypes, ...bonusOptionTypes];
 
-// 단계별 최대 수치
+// 단계별 최대 수치 (M등급 기준)
 const tierMaxValues = {
-  '태초': { A: 12, B: 17, C: 35, D: 23 },
   '혼돈': { A: 14, B: 19, C: 40, D: 26 },
   '심연': { A: 16, B: 21, C: 45, D: 29 },
-  '유니크': { A: 16, B: 21, C: 45, D: 29 } // 유니크는 심연급
+  '유니크': { A: 16, B: 21, C: 45, D: 29 }
 };
 
-// 아이템 종류 정의
+// 계승 등급별 수치
+const GRADE_VALUES = {
+  A: { // 치확, 공속, 회피
+    '혼돈': { M: 14, SS: 13, S: 12, A: 11, B: 9, C: 7 },
+    '심연': { M: 16, SS: 15, S: 14, A: 13, B: 11, C: 9 }
+  },
+  B: { // 뎀감, 흡혈, 이속
+    '혼돈': { M: 19, SS: 17, S: 15, A: 13, B: 11, C: 9 },
+    '심연': { M: 21, SS: 20, S: 19, A: 18, B: 16, C: 14 }
+  },
+  C: { // 종족, 치피
+    '혼돈': { M: 40, SS: 37, S: 34, A: 31, B: 28, C: 25 },
+    '심연': { M: 45, SS: 42, S: 39, A: 36, B: 33, C: 30 }
+  },
+  D: { // 전공, 체력, 방어
+    '혼돈': { M: 26, SS: 24, S: 22, A: 20, B: 17, C: 14 },
+    '심연': { M: 29, SS: 27, S: 25, A: 23, B: 20, C: 17 }
+  }
+};
+
+const GRADES = ['M', 'SS', 'S', 'A', 'B', 'C'];
+const GRADE_COST = { M: 100, SS: 50, S: 25, A: 12, B: 6, C: 1 };
+
+// 아이템 종류
 const itemTypes = ['무기', '목걸이', '반지', '벨트', '투구', '갑옷', '장갑', '신발'];
 
-// 유니크 장비 정의 (고유옵션 포함)
+// 유니크 장비 정의
 const uniqueItemDefs = {
   '갑옷': [
     { name: '서리갑', passive: '서리파동', min: 10, max: 25, unit: '%' },
@@ -64,402 +90,292 @@ const uniqueItemDefs = {
   ]
 };
 
-// 유니크 장비 부위 매핑
-const uniqueToItemType = {};
 const uniqueDefMap = {};
 Object.entries(uniqueItemDefs).forEach(([type, items]) => {
-  items.forEach(item => {
-    uniqueToItemType[item.name] = type;
-    uniqueDefMap[item.name] = item;
-  });
+  items.forEach(item => { uniqueDefMap[item.name] = { ...item, itemType: type }; });
 });
-
-// 모든 유니크 장비 이름 목록
 const allUniqueNames = Object.values(uniqueItemDefs).flat().map(u => u.name);
 
-// 룬 최대값 정의
+// 룬 최대값
 const runeMaxValues = {
   critRate: 6, atkSpeed: 6, evasion: 6,
   dmgReduce: 12, lifesteal: 12, moveSpeed: 12
 };
 
 // 로컬스토리지 키
-const STORAGE_KEY = 'equipment_calculator_items_v3';
-const STORAGE_KEY_UNIQUE = 'equipment_calculator_unique_v3';
+const STORAGE_KEY = 'equipment_calc_v5';
+const STORAGE_KEY_UNIQUE = 'equipment_calc_unique_v5';
+
+// 엑셀 헤더
+const excelHeaders = ['장비종류', '단계', '유니크', '고유옵션', '치확', '공속', '회피', '받뎀감', '흡혈', '이속', '악마', '보스', '영장', '치피', '전공', '체력', '방어'];
+const headerToOptionId = {
+  '치확': 'critRate', '공속': 'atkSpeed', '회피': 'evasion',
+  '받뎀감': 'dmgReduce', '흡혈': 'lifesteal', '이속': 'moveSpeed',
+  '악마': 'demon', '보스': 'boss', '영장': 'primate',
+  '치피': 'critDmg', '전공': 'totalAtk', '체력': 'health', '방어': 'depend'
+};
+
+// ===== 유틸리티 함수 =====
+
+const loadFromStorage = (key, defaultValue = []) => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : defaultValue;
+    }
+  } catch (e) { console.error('Load failed:', e); }
+  return defaultValue;
+};
+
+const saveToStorage = (key, data) => {
+  try { localStorage.setItem(key, JSON.stringify(data)); }
+  catch (e) { console.error('Save failed:', e); }
+};
+
+// 옵션의 그룹에 따른 등급별 수치 가져오기
+const getGradeValue = (tier, group, grade) => {
+  if (tier === '유니크') return 0; // 유니크는 계승 불가
+  return GRADE_VALUES[group]?.[tier]?.[grade] || 0;
+};
+
+// 현재 수치로부터 등급 추정
+const estimateGrade = (tier, group, value) => {
+  if (!value || tier === '유니크') return null;
+  const tierGrades = GRADE_VALUES[group]?.[tier];
+  if (!tierGrades) return null;
+  for (const grade of GRADES) {
+    if (value >= tierGrades[grade]) return grade;
+  }
+  return 'C';
+};
+
+// ===== 메인 컴포넌트 =====
 
 const EquipmentCalculator = () => {
+  // 상태 관리
+  const [targetConfigs, setTargetConfigs] = useState({
+    critRate: { value: 50, slots: 3 },
+    atkSpeed: { value: 40, slots: 2 },
+    evasion: { value: 40, slots: 2 },
+    dmgReduce: { value: 0, slots: 0 },
+    lifesteal: { value: 40, slots: 2 },
+    moveSpeed: { value: 0, slots: 0 }
+  });
+
+  const [items, setItems] = useState(() => loadFromStorage(STORAGE_KEY));
+  const [uniqueEquipments, setUniqueEquipments] = useState(() => loadFromStorage(STORAGE_KEY_UNIQUE));
+  const [isTestMode, setIsTestMode] = useState(false);
+  const [isListExpanded, setIsListExpanded] = useState(true);
+  const [isUniqueListExpanded, setIsUniqueListExpanded] = useState(true);
+
+  const [newItem, setNewItem] = useState({ tier: '심연', itemType: '무기', options: {} });
+  const [newUniqueItem, setNewUniqueItem] = useState({ itemType: '갑옷', uniqueName: '서리갑', passiveValue: 0, options: {} });
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingUniqueId, setEditingUniqueId] = useState(null);
+
+  const [searchText, setSearchText] = useState('');
+  const [filterTier, setFilterTier] = useState('전체');
+
+  const [selectedRace, setSelectedRace] = useState(null);
+  const [includeCritDmg, setIncludeCritDmg] = useState(true);
+  const [includeTotalAtk, setIncludeTotalAtk] = useState(true);
+  const [raceResults, setRaceResults] = useState(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+
+  // 저장
+  useEffect(() => {
+    if (!isTestMode) saveToStorage(STORAGE_KEY, items);
+  }, [items, isTestMode]);
+
+  useEffect(() => {
+    if (!isTestMode) saveToStorage(STORAGE_KEY_UNIQUE, uniqueEquipments);
+  }, [uniqueEquipments, isTestMode]);
+
+  // 파생 상태
+  const selectedUniqueItems = useMemo(() => uniqueEquipments.filter(u => u.selected), [uniqueEquipments]);
+  const selectedUniqueTypes = useMemo(() => selectedUniqueItems.map(u => u.itemType), [selectedUniqueItems]);
+
+  const filteredItems = useMemo(() => {
+    return items.filter(item => {
+      const matchSearch = !searchText || item.itemType.includes(searchText) || item.tier.includes(searchText) ||
+        Object.keys(item.options).some(optId => {
+          const opt = allOptionTypes.find(o => o.id === optId);
+          return opt && (opt.name.includes(searchText) || opt.abbr.includes(searchText));
+        });
+      const matchTier = filterTier === '전체' || item.tier === filterTier;
+      return matchSearch && matchTier;
+    });
+  }, [items, searchText, filterTier]);
+
   // 더미 데이터 생성
-  const generateDummyData = (count = 250) => {
-    const dummyItems = [];
-    const tiers = ['태초', '혼돈', '심연'];
-    const raceOptions = ['demon', 'boss', 'primate'];
-    const allOptions = [...baseOptionTypes, ...bonusOptionTypes];
-  
+  const generateDummyData = useCallback((count) => {
+    const newItems = [];
+    const tiers = ['혼돈', '심연'];
+    const races = ['demon', 'boss', 'primate'];
+    const activeBaseOpts = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0);
+
     for (let i = 0; i < count; i++) {
       const tier = tiers[Math.floor(Math.random() * tiers.length)];
       const itemType = itemTypes[i % itemTypes.length];
       const options = {};
-      const usedOptions = new Set();
-      
-      // 70% 확률로 1~3티어급 (종족 포함 고효율 장비)
-      const isHighTier = Math.random() < 0.7;
-  
-      if (isHighTier) {
-        // 1. 종족 옵션 필수 포함
-        const selectedRace = raceOptions[Math.floor(Math.random() * raceOptions.length)];
-        const raceOpt = allOptions.find(o => o.id === selectedRace);
-        options[selectedRace] = Math.floor(tierMaxValues[tier][raceOpt.group] * (0.8 + Math.random() * 0.2));
-        usedOptions.add(selectedRace);
-  
-        // 2. 추가 유효 옵션 (치피, 전공 위주)
-        const dice = Math.random();
-        if (dice < 0.4) {
-          // [종족 + 치피 + 전공] 조합 (베스트)
-          ['critDmg', 'totalAtk'].forEach(id => {
-            const opt = allOptions.find(o => o.id === id);
-            options[id] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
-            usedOptions.add(id);
-          });
-        } else if (dice < 0.7) {
-          // [종족 + 치피] 조합
-          const opt = allOptions.find(o => o.id === 'critDmg');
-          options['critDmg'] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
-          usedOptions.add('critDmg');
-        } else {
-          // [종족 + 전공] 조합
-          const opt = allOptions.find(o => o.id === 'totalAtk');
-          options['totalAtk'] = Math.floor(tierMaxValues[tier][opt.group] * (0.8 + Math.random() * 0.2));
-          usedOptions.add('totalAtk');
+      const quality = Math.random();
+
+      // 종족 필수
+      const race = races[Math.floor(Math.random() * 3)];
+      options[race] = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+
+      if (quality < 0.35) {
+        // 1티어: 종족+치피+전공+1유효
+        options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+        options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
+        if (activeBaseOpts.length > 0) {
+          const baseOpt = activeBaseOpts[Math.floor(Math.random() * activeBaseOpts.length)];
+          options[baseOpt.id] = Math.floor(tierMaxValues[tier][baseOpt.group] * (0.7 + Math.random() * 0.3));
         }
-  
-        // 3. 빈 슬롯에 목표 수치용 옵션(치확, 공속 등) 1~2개 추가
-        const extraCount = Math.floor(Math.random() * 2) + 1;
-        const targets = baseOptionTypes.filter(o => !usedOptions.has(o.id));
-        targets.sort(() => Math.random() - 0.5).slice(0, extraCount).forEach(opt => {
+      } else if (quality < 0.6) {
+        // 2티어: 종족+치피+2유효
+        options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+        shuffled.slice(0, 2).forEach(opt => {
           options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
-          usedOptions.add(opt.id);
         });
-  
-      } else {
-        // 30% 확률로 일반 유효 장비 (최소 2옵션 이상)
-        const numOptions = Math.floor(Math.random() * 3) + 2; // 2~4개
-        const shuffledBase = [...baseOptionTypes].sort(() => Math.random() - 0.5);
-        
-        for (let j = 0; j < numOptions; j++) {
-          const opt = shuffledBase[j];
+      } else if (quality < 0.8) {
+        // 3티어: 종족+전공+2유효
+        options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
+        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+        shuffled.slice(0, 2).forEach(opt => {
           options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
-        }
+        });
+      } else {
+        // 나머지: 종족+1~2유효
+        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+        const numOpts = 1 + Math.floor(Math.random() * 2);
+        shuffled.slice(0, numOpts).forEach(opt => {
+          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.6 + Math.random() * 0.4));
+        });
       }
-  
-      dummyItems.push({ 
-        id: Date.now() + i + Math.random(), // ID 중복 방지
-        tier, 
-        itemType, 
-        options 
-      });
+
+      newItems.push({ id: `dummy-${Date.now()}-${i}`, tier, itemType, options });
     }
-  
-    return dummyItems;
-  };
+    setItems(newItems);
+    setRaceResults(null);
+  }, [targetConfigs]);
 
-  const loadFromStorage = () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) { console.error('Failed to load:', e); }
-    return [];
-  };
-
-  const loadUniqueFromStorage = () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_UNIQUE);
-      if (saved) return JSON.parse(saved);
-    } catch (e) { console.error('Failed to load unique:', e); }
-    return [];
-  };
-
-  const saveToStorage = (data) => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
-    catch (e) { console.error('Failed to save:', e); }
-  };
-
-  const saveUniqueToStorage = (data) => {
-    try { localStorage.setItem(STORAGE_KEY_UNIQUE, JSON.stringify(data)); }
-    catch (e) { console.error('Failed to save unique:', e); }
-  };
-
-  // 엑셀 헤더 매핑
-  const excelHeaders = ['장비종류', '단계', '유니크', '고유옵션', '치확', '공속', '회피', '받뎀감', '흡혈', '이속', '악마', '보스', '영장', '치피', '전공'];
-  const headerToOptionId = {
-    '치확': 'critRate', '공속': 'atkSpeed', '회피': 'evasion',
-    '받뎀감': 'dmgReduce', '흡혈': 'lifesteal', '이속': 'moveSpeed',
-    '악마': 'demon', '보스': 'boss', '영장': 'primate',
-    '치피': 'critDmg', '전공': 'totalAtk'
-  };
-
-  // 엑셀 다운로드
+  // 엑셀 다운로드/업로드
   const downloadExcel = () => {
     const allItems = [...items, ...uniqueEquipments];
-    if (allItems.length === 0) {
-      alert('다운로드할 장비가 없습니다.');
-      return;
-    }
-
+    if (allItems.length === 0) { alert('다운로드할 장비가 없습니다.'); return; }
     const rows = [excelHeaders.join(',')];
-    
     allItems.forEach(item => {
       const isUnique = !!item.uniqueName;
       const row = [
-        item.itemType,
-        isUnique ? '유니크' : item.tier,
-        item.uniqueName || '',
-        item.passiveValue || '',
-        item.options.critRate || '',
-        item.options.atkSpeed || '',
-        item.options.evasion || '',
-        item.options.dmgReduce || '',
-        item.options.lifesteal || '',
-        item.options.moveSpeed || '',
-        item.options.demon || '',
-        item.options.boss || '',
-        item.options.primate || '',
-        item.options.critDmg || '',
-        item.options.totalAtk || ''
+        item.itemType, isUnique ? '유니크' : item.tier, item.uniqueName || '', item.passiveValue || '',
+        item.options.critRate || '', item.options.atkSpeed || '', item.options.evasion || '',
+        item.options.dmgReduce || '', item.options.lifesteal || '', item.options.moveSpeed || '',
+        item.options.demon || '', item.options.boss || '', item.options.primate || '',
+        item.options.critDmg || '', item.options.totalAtk || ''
       ];
       rows.push(row.join(','));
     });
-
-    const csvContent = '\uFEFF' + rows.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const blob = new Blob(['\uFEFF' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `장비목록_${new Date().toISOString().slice(0,10)}.csv`;
+    link.href = URL.createObjectURL(blob);
+    link.download = `장비목록_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
-    URL.revokeObjectURL(url);
   };
 
-  // 엑셀 업로드
   const handleExcelUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const text = event.target.result;
-        const lines = text.split(/\r?\n/).filter(line => line.trim());
-        
-        if (lines.length < 2) {
-          alert('유효한 데이터가 없습니다.');
-          return;
-        }
-
+        const lines = event.target.result.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) { alert('유효한 데이터가 없습니다.'); return; }
         const headers = lines[0].split(',').map(h => h.trim());
-        const itemTypeIdx = headers.indexOf('장비종류');
+        const typeIdx = headers.indexOf('장비종류');
         const tierIdx = headers.indexOf('단계');
         const uniqueIdx = headers.indexOf('유니크');
         const passiveIdx = headers.indexOf('고유옵션');
-        
-        if (itemTypeIdx === -1 || tierIdx === -1) {
-          alert('헤더에 "장비종류"와 "단계" 열이 필요합니다.');
-          return;
-        }
+        if (typeIdx === -1 || tierIdx === -1) { alert('헤더에 장비종류, 단계 필요'); return; }
 
-        const newItems = [];
-        const newUniqueItems = [];
-        
+        const newItems = [], newUniques = [];
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
-          if (values.length < 2) continue;
-          
-          const itemType = values[itemTypeIdx];
-          const tier = values[tierIdx];
-          const uniqueName = uniqueIdx !== -1 ? values[uniqueIdx] : '';
-          const passiveValue = passiveIdx !== -1 ? parseInt(values[passiveIdx]) || 0 : 0;
-          
+          const vals = lines[i].split(',').map(v => v.trim());
+          if (vals.length < 2) continue;
+          const itemType = vals[typeIdx], tier = vals[tierIdx];
+          const uniqueName = uniqueIdx !== -1 ? vals[uniqueIdx] : '';
+          const passiveValue = passiveIdx !== -1 ? parseInt(vals[passiveIdx]) || 0 : 0;
           if (!itemTypes.includes(itemType)) continue;
-          
+
           const options = {};
-          headers.forEach((header, idx) => {
-            if (['장비종류', '단계', '유니크', '고유옵션'].includes(header)) return;
-            const optionId = headerToOptionId[header];
-            if (!optionId) return;
-            const value = parseInt(values[idx]);
-            if (value && value > 0) options[optionId] = value;
+          headers.forEach((h, idx) => {
+            const optId = headerToOptionId[h];
+            if (optId) { const v = parseInt(vals[idx]); if (v > 0) options[optId] = v; }
           });
-          
+
           if (uniqueName && allUniqueNames.includes(uniqueName)) {
-            // 유니크 장비
-            newUniqueItems.push({
-              id: Date.now() + i + 10000,
-              itemType,
-              uniqueName,
-              passiveValue,
-              options,
-              selected: false
-            });
-          } else if (['태초', '혼돈', '심연'].includes(tier)) {
-            // 일반 장비
-            if (Object.keys(options).length > 0) {
-              newItems.push({ id: Date.now() + i, tier, itemType, options });
-            }
+            newUniques.push({ id: Date.now() + i + 10000, itemType, uniqueName, passiveValue, options, selected: false, tier: '유니크' });
+          } else if (['혼돈', '심연'].includes(tier) && Object.keys(options).length > 0) {
+            newItems.push({ id: Date.now() + i, tier, itemType, options });
           }
         }
-
-        if (newItems.length === 0 && newUniqueItems.length === 0) {
-          alert('유효한 장비 데이터가 없습니다.');
-          return;
-        }
-
         if (newItems.length > 0) setItems(prev => [...prev, ...newItems]);
-        if (newUniqueItems.length > 0) setUniqueEquipments(prev => [...prev, ...newUniqueItems]);
-        
+        if (newUniques.length > 0) setUniqueEquipments(prev => [...prev, ...newUniques]);
         setIsTestMode(false);
-        setUseActualValues(true);
         setRaceResults(null);
-        setMCraftSimulation({});
-        alert(`일반 ${newItems.length}개, 유니크 ${newUniqueItems.length}개 장비가 추가되었습니다.`);
-        
-      } catch (error) {
-        console.error('Excel parse error:', error);
-        alert('파일 파싱 중 오류가 발생했습니다.');
-      }
+        alert(`일반 ${newItems.length}개, 유니크 ${newUniques.length}개 추가`);
+      } catch (err) { console.error(err); alert('파싱 오류'); }
     };
-    
     reader.readAsText(file, 'UTF-8');
     e.target.value = '';
   };
 
-  // 상태 관리
-  const [targetValues, setTargetValues] = useState({
-    critRate: 50, atkSpeed: 40, evasion: 40,
-    dmgReduce: 0, lifesteal: 40, moveSpeed: 0
-  });
-
-  const [items, setItems] = useState(() => loadFromStorage());
-  const [uniqueEquipments, setUniqueEquipments] = useState(() => loadUniqueFromStorage());
-  const [useActualValues, setUseActualValues] = useState(true);
-  const [isTestMode, setIsTestMode] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [isListExpanded, setIsListExpanded] = useState(true);
-  const [isUniqueListExpanded, setIsUniqueListExpanded] = useState(true);
-  
-  const [newItem, setNewItem] = useState({ tier: '태초', itemType: '무기', options: {} });
-  const [newUniqueItem, setNewUniqueItem] = useState({ 
-    itemType: '갑옷', 
-    uniqueName: '서리갑', 
-    passiveValue: 0,
-    options: {} 
-  });
-  
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editingUniqueId, setEditingUniqueId] = useState(null);
-  
-  // 검색 및 필터
-  const [searchText, setSearchText] = useState('');
-  const [filterItemType, setFilterItemType] = useState('전체');
-  const [filterTier, setFilterTier] = useState('전체');
-  
-  const [uniqueSearchText, setUniqueSearchText] = useState('');
-  
-  // 추천 모드 상태
-  const [selectedRace, setSelectedRace] = useState(null);
-  const [includeCritDmg, setIncludeCritDmg] = useState(false);
-  const [includeTotalAtk, setIncludeTotalAtk] = useState(false);
-  const [raceResults, setRaceResults] = useState(null);
-  const [isCalculating, setIsCalculating] = useState(false);
-  const [mCraftSimulation, setMCraftSimulation] = useState({});
-
-  // 로컬스토리지 저장
-  useEffect(() => {
-    if (useActualValues && !isTestMode) {
-      saveToStorage(items);
-    }
-  }, [items, useActualValues, isTestMode]);
-
-  useEffect(() => {
-    if (useActualValues && !isTestMode) {
-      saveUniqueToStorage(uniqueEquipments);
-    }
-  }, [uniqueEquipments, useActualValues, isTestMode]);
-
-  // 선택된 유니크 장비
-  const selectedUniqueItems = uniqueEquipments.filter(u => u.selected);
-  const selectedUniqueTypes = selectedUniqueItems.map(u => u.itemType);
-
-  // 필터링된 아이템
-  const filteredItems = items.filter(item => {
-    const matchSearch = searchText === '' || 
-      item.itemType.includes(searchText) || 
-      item.tier.includes(searchText) ||
-      Object.entries(item.options).some(([optId, val]) => {
-        const opt = allOptionTypes.find(o => o.id === optId);
-        return opt && (opt.name.includes(searchText) || opt.abbr.includes(searchText));
-      });
-    const matchType = filterItemType === '전체' || item.itemType === filterItemType;
-    const matchTier = filterTier === '전체' || item.tier === filterTier;
-    return matchSearch && matchType && matchTier;
-  });
-
-  const filteredUniqueItems = uniqueEquipments.filter(item => {
-    return uniqueSearchText === '' || 
-      item.uniqueName.includes(uniqueSearchText) || 
-      item.itemType.includes(uniqueSearchText) ||
-      item.tier.includes(uniqueSearchText);
-  });
-
-  // 결과 초기화 헬퍼
-  const resetResults = () => {
-    setShowResults(false);
+  // 타겟 설정 업데이트
+  const updateTargetConfig = (optId, field, value) => {
+    setTargetConfigs(prev => ({
+      ...prev,
+      [optId]: { ...prev[optId], [field]: Math.max(0, parseInt(value) || 0) }
+    }));
     setRaceResults(null);
-    setMCraftSimulation({});
   };
 
   // 일반 장비 CRUD
-  const toggleNewItemOption = (optionId) => {
+  const toggleNewItemOption = (optId) => {
     setNewItem(prev => {
-      const newOptions = { ...prev.options };
-      if (newOptions[optionId] !== undefined) {
-        delete newOptions[optionId];
-      } else {
-        const option = allOptionTypes.find(o => o.id === optionId);
-        const maxValue = tierMaxValues[prev.tier][option.group];
-        newOptions[optionId] = maxValue; // 항상 최대값으로 설정
+      const newOpts = { ...prev.options };
+      if (newOpts[optId] !== undefined) delete newOpts[optId];
+      else {
+        const opt = allOptionTypes.find(o => o.id === optId);
+        newOpts[optId] = tierMaxValues[prev.tier][opt.group];
       }
-      return { ...prev, options: newOptions };
+      return { ...prev, options: newOpts };
     });
   };
 
-  const updateNewItemOptionValue = (optionId, value) => {
-    const option = allOptionTypes.find(o => o.id === optionId);
-    const maxValue = tierMaxValues[newItem.tier][option.group];
-    setNewItem(prev => ({
-      ...prev,
-      options: { ...prev.options, [optionId]: Math.min(parseInt(value) || 0, maxValue) }
-    }));
+  const updateNewItemOption = (optId, value) => {
+    const opt = allOptionTypes.find(o => o.id === optId);
+    const max = tierMaxValues[newItem.tier][opt.group];
+    setNewItem(prev => ({ ...prev, options: { ...prev.options, [optId]: Math.min(parseInt(value) || 0, max) } }));
   };
 
   const updateNewItemTier = (tier) => {
     setNewItem(prev => {
-      const newOptions = {};
-      Object.keys(prev.options).forEach(optionId => {
-        const option = allOptionTypes.find(o => o.id === optionId);
-        const maxValue = tierMaxValues[tier][option.group];
-        newOptions[optionId] = useActualValues ? Math.min(prev.options[optionId], maxValue) : maxValue;
+      const newOpts = {};
+      Object.keys(prev.options).forEach(optId => {
+        const opt = allOptionTypes.find(o => o.id === optId);
+        newOpts[optId] = tierMaxValues[tier][opt.group];
       });
-      return { ...prev, tier, options: newOptions };
+      return { ...prev, tier, options: newOpts };
     });
   };
 
   const addItem = () => {
-    if (Object.keys(newItem.options).length === 0) {
-      alert('최소 1개의 옵션을 선택해주세요.');
-      return;
-    }
+    if (Object.keys(newItem.options).length === 0) { alert('최소 1개 옵션 선택'); return; }
     setItems(prev => [...prev, { ...newItem, id: Date.now() }]);
-    setNewItem({ tier: '태초', itemType: '무기', options: {} });
-    resetResults();
+    setNewItem({ tier: '심연', itemType: '무기', options: {} });
+    setRaceResults(null);
   };
 
   const startEditItem = (item) => {
@@ -468,665 +384,664 @@ const EquipmentCalculator = () => {
   };
 
   const saveEditItem = () => {
-    if (Object.keys(newItem.options).length === 0) {
-      alert('최소 1개의 옵션을 선택해주세요.');
-      return;
-    }
-    setItems(prev => prev.map(item => 
-      item.id === editingItemId ? { ...newItem, id: editingItemId } : item
-    ));
+    if (Object.keys(newItem.options).length === 0) { alert('최소 1개 옵션 선택'); return; }
+    setItems(prev => prev.map(it => it.id === editingItemId ? { ...newItem, id: editingItemId } : it));
     setEditingItemId(null);
-    setNewItem({ tier: '태초', itemType: '무기', options: {} });
-    resetResults();
+    setNewItem({ tier: '심연', itemType: '무기', options: {} });
+    setRaceResults(null);
   };
 
   const cancelEdit = () => {
     setEditingItemId(null);
     setEditingUniqueId(null);
-    setNewItem({ tier: '태초', itemType: '무기', options: {} });
+    setNewItem({ tier: '심연', itemType: '무기', options: {} });
     setNewUniqueItem({ itemType: '갑옷', uniqueName: '서리갑', passiveValue: 0, options: {} });
   };
 
-  const removeItem = (id) => {
-    setItems(prev => prev.filter(item => item.id !== id));
-    resetResults();
-  };
-
-  const clearAllItems = () => {
-    if (window.confirm('모든 일반 장비를 삭제하시겠습니까?')) {
-      setItems([]);
-      resetResults();
-    }
-  };
+  const removeItem = (id) => { setItems(prev => prev.filter(it => it.id !== id)); setRaceResults(null); };
+  const clearAllItems = () => { if (confirm('모든 일반 장비 삭제?')) { setItems([]); setRaceResults(null); } };
 
   // 유니크 장비 CRUD
-  const toggleNewUniqueOption = (optionId) => {
+  const toggleNewUniqueOption = (optId) => {
     setNewUniqueItem(prev => {
-      const newOptions = { ...prev.options };
-      if (newOptions[optionId] !== undefined) {
-        delete newOptions[optionId];
-      } else {
-        const option = allOptionTypes.find(o => o.id === optionId);
-        const maxValue = tierMaxValues['유니크'][option.group];
-        newOptions[optionId] = maxValue; // 항상 최대값으로 설정
+      const newOpts = { ...prev.options };
+      if (newOpts[optId] !== undefined) delete newOpts[optId];
+      else {
+        const opt = allOptionTypes.find(o => o.id === optId);
+        newOpts[optId] = tierMaxValues['유니크'][opt.group];
       }
-      return { ...prev, options: newOptions };
+      return { ...prev, options: newOpts };
     });
   };
 
-  const updateNewUniqueOptionValue = (optionId, value) => {
-    const option = allOptionTypes.find(o => o.id === optionId);
-    const maxValue = tierMaxValues['유니크'][option.group];
-    setNewUniqueItem(prev => ({
-      ...prev,
-      options: { ...prev.options, [optionId]: Math.min(parseInt(value) || 0, maxValue) }
-    }));
+  const updateNewUniqueOption = (optId, value) => {
+    const opt = allOptionTypes.find(o => o.id === optId);
+    const max = tierMaxValues['유니크'][opt.group];
+    setNewUniqueItem(prev => ({ ...prev, options: { ...prev.options, [optId]: Math.min(parseInt(value) || 0, max) } }));
   };
 
   const updateNewUniqueItemType = (itemType) => {
-    const availableUniques = uniqueItemDefs[itemType] || [];
-    setNewUniqueItem(prev => ({
-      ...prev,
-      itemType,
-      uniqueName: availableUniques[0]?.name || '',
-      passiveValue: 0
-    }));
-  };
-
-  const updateNewUniqueName = (uniqueName) => {
-    setNewUniqueItem(prev => ({
-      ...prev,
-      uniqueName,
-      passiveValue: 0
-    }));
+    const uniques = uniqueItemDefs[itemType] || [];
+    setNewUniqueItem(prev => ({ ...prev, itemType, uniqueName: uniques[0]?.name || '', passiveValue: 0 }));
   };
 
   const addUniqueItem = () => {
     const def = uniqueDefMap[newUniqueItem.uniqueName];
-    if (!def) {
-      alert('유니크 장비를 선택해주세요.');
-      return;
-    }
+    if (!def) { alert('유니크 선택'); return; }
     if (newUniqueItem.passiveValue < def.min || newUniqueItem.passiveValue > def.max) {
-      alert(`고유옵션 수치는 ${def.min}~${def.max} 사이여야 합니다.`);
-      return;
+      alert(`고유옵션: ${def.min}~${def.max}`); return;
     }
-    setUniqueEquipments(prev => [...prev, { 
-      ...newUniqueItem, 
-      id: Date.now(), 
-      selected: false,
-      tier: '유니크'
-    }]);
+    setUniqueEquipments(prev => [...prev, { ...newUniqueItem, id: Date.now(), selected: false, tier: '유니크' }]);
     setNewUniqueItem({ itemType: '갑옷', uniqueName: '서리갑', passiveValue: 0, options: {} });
-    resetResults();
+    setRaceResults(null);
   };
 
   const startEditUniqueItem = (item) => {
     setEditingUniqueId(item.id);
-    setNewUniqueItem({
-      itemType: item.itemType,
-      uniqueName: item.uniqueName,
-      passiveValue: item.passiveValue || 0,
-      options: { ...item.options }
-    });
+    setNewUniqueItem({ itemType: item.itemType, uniqueName: item.uniqueName, passiveValue: item.passiveValue || 0, options: { ...item.options } });
   };
 
   const saveEditUniqueItem = () => {
     const def = uniqueDefMap[newUniqueItem.uniqueName];
-    if (!def) {
-      alert('유니크 장비를 선택해주세요.');
-      return;
-    }
+    if (!def) { alert('유니크 선택'); return; }
     if (newUniqueItem.passiveValue < def.min || newUniqueItem.passiveValue > def.max) {
-      alert(`고유옵션 수치는 ${def.min}~${def.max} 사이여야 합니다.`);
-      return;
+      alert(`고유옵션: ${def.min}~${def.max}`); return;
     }
-    setUniqueEquipments(prev => prev.map(item => 
-      item.id === editingUniqueId 
-        ? { ...newUniqueItem, id: editingUniqueId, selected: item.selected, tier: '유니크' }
-        : item
+    setUniqueEquipments(prev => prev.map(it =>
+      it.id === editingUniqueId ? { ...newUniqueItem, id: editingUniqueId, selected: it.selected, tier: '유니크' } : it
     ));
     setEditingUniqueId(null);
     setNewUniqueItem({ itemType: '갑옷', uniqueName: '서리갑', passiveValue: 0, options: {} });
-    resetResults();
+    setRaceResults(null);
   };
 
-  const removeUniqueItem = (id) => {
-    setUniqueEquipments(prev => prev.filter(item => item.id !== id));
-    resetResults();
-  };
-
-  const clearAllUniqueItems = () => {
-    if (window.confirm('모든 유니크 장비를 삭제하시겠습니까?')) {
-      setUniqueEquipments([]);
-      resetResults();
-    }
-  };
+  const removeUniqueItem = (id) => { setUniqueEquipments(prev => prev.filter(it => it.id !== id)); setRaceResults(null); };
+  const clearAllUniqueItems = () => { if (confirm('모든 유니크 삭제?')) { setUniqueEquipments([]); setRaceResults(null); } };
 
   const toggleUniqueSelection = (id) => {
     setUniqueEquipments(prev => {
       const item = prev.find(u => u.id === id);
       if (!item) return prev;
-      
-      const currentSelected = prev.filter(u => u.selected);
-      
-      if (item.selected) {
-        // 선택 해제
-        return prev.map(u => u.id === id ? { ...u, selected: false } : u);
-      } else {
-        // 선택하려는 경우
-        if (currentSelected.length >= 2) {
-          alert('유니크 장비는 최대 2개까지 선택 가능합니다.');
-          return prev;
-        }
-        // 같은 부위가 이미 선택되어 있는지 확인
-        if (currentSelected.some(u => u.itemType === item.itemType)) {
-          alert(`${item.itemType} 부위는 이미 선택되어 있습니다.`);
-          return prev;
-        }
-        return prev.map(u => u.id === id ? { ...u, selected: true } : u);
-      }
+      const selected = prev.filter(u => u.selected);
+      if (item.selected) return prev.map(u => u.id === id ? { ...u, selected: false } : u);
+      if (selected.length >= 2) { alert('최대 2개'); return prev; }
+      if (selected.some(u => u.itemType === item.itemType)) { alert(`${item.itemType} 이미 선택됨`); return prev; }
+      return prev.map(u => u.id === id ? { ...u, selected: true } : u);
     });
-    resetResults();
+    setRaceResults(null);
   };
 
-  const updateTargetValue = (optionId, value) => {
-    setTargetValues(prev => ({
-      ...prev,
-      [optionId]: Math.min(parseInt(value) || 0, 100)
-    }));
-    resetResults();
-  };
+  // ===== 핵심 추천 알고리즘 =====
 
-  // 1. 아이템 필터링 로직: 선택한 종족 외 타 종족 아이템 완전 제거 및 압축률 기반 추출
-const getFilteredItemsByType = useCallback((raceId, withCritDmg, withTotalAtk) => {
-  const otherRaces = ['demon', 'boss', 'primate'].filter(id => id !== raceId);
-  const excludedTypes = selectedUniqueTypes;
-
-  // 필터링: 타 종족 옵션이 하나라도 붙어있으면 즉시 탈락
-  const availableItems = items.filter(item => {
-    if (excludedTypes.includes(item.itemType)) return false;
-    const hasOtherRace = otherRaces.some(race => item.options[race] !== undefined);
-    return !hasOtherRace; // 내 종족이거나 종족 옵션이 아예 없는 템만 통과
-  });
-
-  const itemsByType = {};
-  availableItems.forEach(item => {
-    if (!itemsByType[item.itemType]) itemsByType[item.itemType] = [];
+  // 장비 단위로 최적 계승 등급 계산 (MMMM, MMSS 등)
+  // 목표: 각 기본 옵션이 목표치를 달성하면서 최소 비용
+  const calculateOptimalInheritance = useCallback((combination, raceId) => {
+    const activeTargets = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0 && targetConfigs[opt.id]?.slots > 0);
     
-    // 후보군 선정을 위한 잠재력 점수 계산
-    let potScore = 0;
-    if (item.options[raceId]) potScore += 2000; // 종족 보유 최우선
-    if (withCritDmg && item.options.critDmg) potScore += 1000;
-    if (withTotalAtk && item.options.totalAtk) potScore += 500;
-    
-    // 유효 옵션(목표치 입력된 것)이 포함되어 있다면 점수 가산
-    baseOptionTypes.forEach(opt => {
-      if (targetValues[opt.id] > 0 && item.options[opt.id] !== undefined) {
-        potScore += 100;
-      }
-    });
-
-    item._tempPotScore = potScore;
-    itemsByType[item.itemType].push(item);
-  });
-
-  // 부위별로 잠재력 높은 상위 20개만 탐색 (연산 효율)
-  Object.keys(itemsByType).forEach(type => {
-    itemsByType[type].sort((a, b) => b._tempPotScore - a._tempPotScore);
-    itemsByType[type] = itemsByType[type].slice(0, 20);
-  });
-
-  return itemsByType;
-}, [items, targetValues, selectedUniqueTypes]);
-
-// 2. 조합 점수 계산 로직: M작+룬 보정 필수 달성 및 옵션 압축률(개수 최소화) 반영
-const calculateCombinationScore = useCallback((combination, raceId, withCritDmg, withTotalAtk) => {
-  const potentialTotals = {};
-  baseOptionTypes.forEach(opt => { potentialTotals[opt.id] = 0; });
-  
-  let raceTotal = 0, critDmgTotal = 0, totalAtkTotal = 0;
-  let usedEffectiveOptionCount = 0; // 유효 옵션 슬롯 사용 개수
-
-  combination.forEach(item => {
-    raceTotal += (item.options[raceId] || 0);
-    critDmgTotal += (item.options.critDmg || 0);
-    totalAtkTotal += (item.options.totalAtk || 0);
-
-    // M작 기준 목표 수치 합산
-    baseOptionTypes.forEach(opt => {
-      if (item.options[opt.id] !== undefined) {
-        potentialTotals[opt.id] += tierMaxValues[item.tier][opt.group];
-        // 목표로 설정한 유효 옵션이 장비에 붙어있는 경우 카운트
-        if (targetValues[opt.id] > 0) usedEffectiveOptionCount++;
-      }
-    });
-  });
-
-  // 목표 달성 여부 확인 (M작 + 룬 1개 보정)
-  let targetsMetCount = 0;
-  const activeTargetKeys = baseOptionTypes.filter(opt => targetValues[opt.id] > 0);
-  
-  activeTargetKeys.forEach(opt => {
-    const runeMax = runeMaxValues[opt.id] || 0;
-    if (potentialTotals[opt.id] + runeMax >= targetValues[opt.id]) {
-      targetsMetCount++;
-    }
-  });
-
-  const allMet = targetsMetCount === activeTargetKeys.length;
-  let score = 0;
-
-  if (!allMet) {
-    // 1순위 조건 미달성: 달성한 목표 개수에 따라 낮은 점수 부여
-    score = (targetsMetCount * 10000) - 2000000;
-  } else {
-    // 1순위 조건 달성: 기본 성공 점수
-    score = 10000000;
-    
-    // 3순위: 종족(악/영/보) 수치 반영 (가중치 최대)
-    score += raceTotal * 5000;
-    
-    // 2순위: 옵션 개수 최소화 (압축률)
-    // 유효 옵션 개수가 적을수록 다른 딜러 옵션이 들어갈 자리가 많아지므로 보너스
-    score += (100 - usedEffectiveOptionCount) * 1000;
-
-    // 4순위: 치피(2등) 및 전공(3등)
-    if (withCritDmg) score += critDmgTotal * 500;
-    if (withTotalAtk) score += totalAtkTotal * 100;
-  }
-
-  return { 
-    score, 
-    raceTotal, 
-    critDmgTotal, 
-    totalAtkTotal, 
-    targetsFullyMet: allMet, 
-    targetsMet: targetsMetCount, 
-    totalTargets: activeTargetKeys.length 
-  };
-}, [targetValues, tierMaxValues, runeMaxValues]);
-
-  // 최적 조합 찾기
-  const findBestRaceCombination = useCallback((raceId, withCritDmg, withTotalAtk) => {
-    const itemsByType = getFilteredItemsByType(raceId, withCritDmg, withTotalAtk);
-    const typesList = Object.keys(itemsByType);
-    
-    // 선택된 유니크 장비를 기본 조합에 포함
-    const baseItems = [...selectedUniqueItems];
-    
-    if (typesList.length === 0 && baseItems.length === 0) return null;
-
-    let bestCombination = null;
-    let bestScore = -Infinity;
-    let bestResult = null;
-    let combinationsChecked = 0;
-    const MAX_COMBINATIONS = 200000; // 더 많은 조합 탐색
-
-    if (typesList.length === 0) {
-      // 유니크 장비만 있는 경우
-      const result = calculateCombinationScore(baseItems, raceId, withCritDmg, withTotalAtk);
-      bestCombination = baseItems;
-      bestScore = result.score;
-      bestResult = result;
-    } else {
-      const stack = [{ index: 0, current: [...baseItems] }];
+    // 각 장비별로 계승 등급 결정
+    const itemGrades = combination.map((item, idx) => {
+      const isUnique = item.tier === '유니크';
       
-      while (stack.length > 0 && combinationsChecked < MAX_COMBINATIONS) {
-        const { index, current } = stack.pop();
-        
-        if (index === typesList.length) {
-          combinationsChecked++;
-          const result = calculateCombinationScore(current, raceId, withCritDmg, withTotalAtk);
-          if (result.score > bestScore) {
-            bestScore = result.score;
-            bestCombination = [...current];
-            bestResult = result;
-          }
-          continue;
-        }
-        
-        const currentType = typesList[index];
-        const itemsOfType = itemsByType[currentType];
-        
-        for (let i = itemsOfType.length - 1; i >= 0; i--) {
-          stack.push({ index: index + 1, current: [...current, itemsOfType[i]] });
-        }
+      if (isUnique) {
+        // 유니크는 계승 불가 - 현재 수치 그대로
+        const optionGrades = {};
+        Object.entries(item.options).forEach(([optId, val]) => {
+          optionGrades[optId] = { grade: '-', current: val, upgraded: val };
+        });
+        return { itemIdx: idx, item, isUnique: true, gradeString: '계승불가', optionGrades, cost: 0 };
       }
-    }
 
-    if (!bestCombination) return null;
-// 결과 표시용: 여기서는 "현재 상태"와 "잠재 상태(M작)"을 구분해서 줄 필요가 있음
-    // 하지만 UI의 혼동을 줄이기 위해 baseTotals 계산 시 M작을 가정한 수치를 기준으로 룬 필요량을 계산해줌
-    
-    const potentialTotals = {}; // M작 기준 합계
-    const currentTotals = {};   // 현재 수치 합계
+      // 일반 장비: 계승 등급 결정
+      // 전략: 딜러 옵션(종족/치피/전공)은 M, 기본 옵션은 목표 달성에 필요한 최소 등급
+      const optionGrades = {};
+      const gradeList = [];
 
-    allOptionTypes.forEach(option => {
-      potentialTotals[option.id] = bestCombination.reduce((sum, item) => {
-        // 해당 옵션이 있으면 Max값, 없으면 0
-        if (item.options[option.id] !== undefined) {
-             return sum + tierMaxValues[item.tier][allOptionTypes.find(o=>o.id===option.id).group];
-        }
-        return sum;
-      }, 0);
-      
-      currentTotals[option.id] = bestCombination.reduce((sum, item) => sum + (item.options[option.id] || 0), 0);
-    });
+      Object.entries(item.options).forEach(([optId, currentVal]) => {
+        const opt = allOptionTypes.find(o => o.id === optId);
+        if (!opt) return;
 
-    const runeInfo = {};
-    let totalShortage = 0;
-    
-    baseOptionTypes.forEach(option => {
-      const target = targetValues[option.id];
-      if (target > 0) {
-        // 중요: 룬 필요량 계산은 'M작을 다 했을 때'를 기준으로 계산해야 함
-        const achievedMax = potentialTotals[option.id];
-        const diff = target - achievedMax;
-        
-        if (diff > 0) {
-          const runeMax = runeMaxValues[option.id] || 0;
-          runeInfo[option.id] = { needed: Math.min(diff, runeMax), shortage: Math.max(0, diff - runeMax) };
-          totalShortage += Math.max(0, diff - runeMax);
-        } else if (diff < 0) {
-          runeInfo[option.id] = { needed: 0, shortage: 0, excess: Math.abs(diff) };
+        // 딜러 옵션은 항상 M등급 권장
+        if (['demon', 'boss', 'primate', 'critDmg', 'totalAtk'].includes(optId)) {
+          const maxVal = getGradeValue(item.tier, opt.group, 'M');
+          optionGrades[optId] = { grade: 'M', current: currentVal, upgraded: maxVal };
+          gradeList.push('M');
         } else {
-          runeInfo[option.id] = { needed: 0, shortage: 0 };
+          // 기본 옵션: 현재 등급 추정 후 유지 (나중에 전체 최적화에서 조정)
+          const currentGrade = estimateGrade(item.tier, opt.group, currentVal) || 'C';
+          optionGrades[optId] = { grade: currentGrade, current: currentVal, upgraded: currentVal };
+          gradeList.push(currentGrade);
+        }
+      });
+
+      // 등급 문자열 생성 (M이 앞으로 오도록 정렬)
+      const sortedGrades = [...gradeList].sort((a, b) => GRADES.indexOf(a) - GRADES.indexOf(b));
+      const cost = gradeList.reduce((sum, g) => sum + GRADE_COST[g], 0);
+
+      return { itemIdx: idx, item, isUnique: false, gradeString: sortedGrades.join(''), optionGrades, cost };
+    });
+
+    // 각 기본 옵션별로 목표 달성 여부 확인 및 최적 등급 조정
+    const optionTotals = {};
+    const optionDetails = {};
+
+    activeTargets.forEach(target => {
+      const optId = target.id;
+      const targetVal = targetConfigs[optId].value;
+      const targetSlots = targetConfigs[optId].slots;
+      const runeMax = runeMaxValues[optId] || 0;
+
+      // 이 옵션을 가진 장비들 찾기
+      const itemsWithOption = itemGrades.filter(ig => ig.optionGrades[optId]);
+      
+      // 실제 사용 부위 수 (초과 가능)
+      const usedSlots = itemsWithOption.length;
+      // 계산에 사용할 장비는 제한 내로
+      const selectedItems = itemsWithOption.slice(0, targetSlots);
+
+      // 현재 합계 (계승 후)
+      let currentTotal = 0;
+      selectedItems.forEach(ig => {
+        if (ig.isUnique) {
+          currentTotal += ig.optionGrades[optId].current;
+        } else {
+          // 계승 등급에 따른 수치
+          const grade = ig.optionGrades[optId].grade;
+          const opt = allOptionTypes.find(o => o.id === optId);
+          currentTotal += getGradeValue(ig.item.tier, opt.group, grade);
+        }
+      });
+
+      // 목표 달성을 위해 필요한 추가 수치
+      const needed = targetVal - currentTotal - runeMax;
+      
+      if (needed > 0 && selectedItems.length > 0) {
+        // 등급 업그레이드 필요
+        for (const ig of selectedItems) {
+          if (ig.isUnique) continue;
+          
+          const opt = allOptionTypes.find(o => o.id === optId);
+          const currentGrade = ig.optionGrades[optId].grade;
+          const currentGradeIdx = GRADES.indexOf(currentGrade);
+          
+          // 더 높은 등급으로 업그레이드 시도
+          for (let i = currentGradeIdx - 1; i >= 0; i--) {
+            const newGrade = GRADES[i];
+            const oldVal = getGradeValue(ig.item.tier, opt.group, currentGrade);
+            const newVal = getGradeValue(ig.item.tier, opt.group, newGrade);
+            const gain = newVal - oldVal;
+            
+            if (gain > 0) {
+              ig.optionGrades[optId].grade = newGrade;
+              ig.optionGrades[optId].upgraded = newVal;
+              currentTotal += gain;
+              
+              // gradeString 업데이트
+              const allGrades = Object.values(ig.optionGrades).map(g => g.grade).filter(g => g !== '-');
+              ig.gradeString = allGrades.sort((a, b) => GRADES.indexOf(a) - GRADES.indexOf(b)).join('');
+              ig.cost = allGrades.reduce((sum, g) => sum + GRADE_COST[g], 0);
+              
+              if (currentTotal + runeMax >= targetVal) break;
+            }
+          }
+          if (currentTotal + runeMax >= targetVal) break;
         }
       }
+
+      // 최종 결과 저장
+      const finalTotal = selectedItems.reduce((sum, ig) => {
+        if (ig.isUnique) return sum + ig.optionGrades[optId].current;
+        const opt = allOptionTypes.find(o => o.id === optId);
+        return sum + getGradeValue(ig.item.tier, opt.group, ig.optionGrades[optId].grade);
+      }, 0);
+
+      const runeNeeded = Math.max(0, Math.min(targetVal - finalTotal, runeMax));
+      const shortage = Math.max(0, targetVal - finalTotal - runeMax);
+      const excess = finalTotal + runeNeeded - targetVal;
+
+      optionTotals[optId] = finalTotal + runeNeeded;
+      optionDetails[optId] = {
+        target: targetVal,
+        fromGear: finalTotal,
+        runeNeeded,
+        runeMax,
+        final: finalTotal + runeNeeded,
+        shortage,
+        excess,
+        usedSlots,
+        targetSlots,
+        achieved: shortage === 0 && excess <= 3 // 초과 3 이내
+      };
     });
+
+    // 딜러 옵션 합계
+    let raceTotal = 0, critDmgTotal = 0, totalAtkTotal = 0;
+    itemGrades.forEach(ig => {
+      if (ig.optionGrades[raceId]) {
+        raceTotal += ig.isUnique ? ig.optionGrades[raceId].current : getGradeValue(ig.item.tier, 'C', ig.optionGrades[raceId].grade);
+      }
+      if (ig.optionGrades.critDmg) {
+        critDmgTotal += ig.isUnique ? ig.optionGrades.critDmg.current : getGradeValue(ig.item.tier, 'C', ig.optionGrades.critDmg.grade);
+      }
+      if (ig.optionGrades.totalAtk) {
+        totalAtkTotal += ig.isUnique ? ig.optionGrades.totalAtk.current : getGradeValue(ig.item.tier, 'D', ig.optionGrades.totalAtk.grade);
+      }
+    });
+
+    const allTargetsMet = activeTargets.every(t => optionDetails[t.id]?.achieved);
+    const totalCost = itemGrades.reduce((sum, ig) => sum + ig.cost, 0);
 
     return {
-      items: bestCombination,
-      totals: currentTotals,
-      potentialTotals,
-      runeInfo,
-      raceTotal: currentTotals[raceId] || 0,
-      critDmgTotal: currentTotals.critDmg || 0,
-      totalAtkTotal: currentTotals.totalAtk || 0,
-      totalShortage,
-      allTargetsMet: totalShortage === 0,
-      combinationsChecked,
-      targetsMet: bestResult?.targetsMet || 0,
-      totalTargets: bestResult?.totalTargets || 0
+      itemGrades,
+      optionTotals,
+      optionDetails,
+      raceTotal,
+      critDmgTotal,
+      totalAtkTotal,
+      allTargetsMet,
+      totalCost
     };
-  }, [getFilteredItemsByType, calculateCombinationScore, targetValues, selectedUniqueItems]);
+  }, [targetConfigs]);
 
-  const handleRaceSelect = useCallback(async (raceId) => {
+  // 조합 점수 계산
+  const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalAtk) => {
+    const result = calculateOptimalInheritance(combination, raceId);
+    
+    // 부위 수 초과 체크 - 초과 시 해당 조합은 실격
+    let slotViolation = false;
+    baseOptionTypes.forEach(opt => {
+      const config = targetConfigs[opt.id];
+      if (config?.value > 0 && config?.slots > 0) {
+        // 해당 옵션을 가진 장비 수 카운트
+        const itemsWithOpt = combination.filter(item => item.options[opt.id] > 0).length;
+        if (itemsWithOpt > config.slots) {
+          slotViolation = true;
+        }
+      }
+    });
+    
+    // 부위 초과 시 매우 낮은 점수
+    if (slotViolation) {
+      return { ...result, score: -999999999, slotViolation: true };
+    }
+    
+    // 점수 계산: 목표 달성 최우선, 그 다음 종족 > 치피 > 전공
+    let score = 0;
+    
+    if (result.allTargetsMet) {
+      score = 100000000; // 목표 달성 시 1억점 기본
+      score += result.raceTotal * 10000;
+      if (withCritDmg) score += result.critDmgTotal * 100;
+      if (withTotalAtk) score += result.totalAtkTotal;
+      score -= result.totalCost; // 비용 패널티
+    } else {
+      // 목표 미달성: 달성한 옵션 수에 따른 점수
+      const activeTargets = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0);
+      const achievedCount = activeTargets.filter(t => result.optionDetails[t.id]?.achieved).length;
+      score = achievedCount * 1000000;
+      score += result.raceTotal * 100;
+      if (withCritDmg) score += result.critDmgTotal;
+      if (withTotalAtk) score += result.totalAtkTotal / 10;
+    }
+
+    return { ...result, score };
+  }, [calculateOptimalInheritance, targetConfigs]);
+
+  // 최적 조합 탐색
+  const findBestCombination = useCallback(async (raceId) => {
+    setIsCalculating(true);
+    setRaceResults(null);
+
+    await new Promise(r => setTimeout(r, 10));
+
+    // 1. 선택한 종족 옵션이 있는 장비만 필터링
+    const availableItems = items.filter(item =>
+      !selectedUniqueTypes.includes(item.itemType) &&
+      item.options[raceId] > 0
+    );
+
+    if (availableItems.length === 0 && selectedUniqueItems.length === 0) {
+      alert('선택한 종족 옵션이 있는 장비가 없습니다.');
+      setIsCalculating(false);
+      return;
+    }
+
+    // 2. 부위별로 그룹화 및 상위 아이템 선별 (성능 최적화)
+    const itemsByType = {};
+    availableItems.forEach(item => {
+      if (!itemsByType[item.itemType]) itemsByType[item.itemType] = [];
+      
+      // 점수 계산: 종족 + 치피 + 전공 + 유효옵션
+      let potScore = item.options[raceId] * 100;
+      if (includeCritDmg && item.options.critDmg) potScore += item.options.critDmg * 10;
+      if (includeTotalAtk && item.options.totalAtk) potScore += item.options.totalAtk;
+      baseOptionTypes.forEach(opt => {
+        if (targetConfigs[opt.id]?.value > 0 && item.options[opt.id]) potScore += 50;
+      });
+      item._score = potScore;
+      
+      itemsByType[item.itemType].push(item);
+    });
+
+    // 부위별 상위 5개만 유지
+    Object.keys(itemsByType).forEach(type => {
+      itemsByType[type].sort((a, b) => b._score - a._score);
+      itemsByType[type] = itemsByType[type].slice(0, 5);
+    });
+
+    const types = Object.keys(itemsByType);
+    
+    if (types.length === 0 && selectedUniqueItems.length === 0) {
+      alert('계산할 장비가 없습니다.');
+      setIsCalculating(false);
+      return;
+    }
+
+    // 3. 조합 탐색 (비동기)
+    let bestResult = { score: -Infinity };
+    let bestCombination = [];
+    const indices = new Array(types.length).fill(0);
+    let finished = false;
+
+    const processChunk = () => {
+      const startTime = performance.now();
+
+      while (!finished) {
+        // 현재 조합 생성
+        const combination = [
+          ...selectedUniqueItems,
+          ...types.map((type, i) => itemsByType[type][indices[i]])
+        ].filter(Boolean);
+
+        // 점수 계산
+        const result = calculateScore(combination, raceId, includeCritDmg, includeTotalAtk);
+        if (result.score > bestResult.score) {
+          bestResult = result;
+          bestCombination = [...combination];
+        }
+
+        // 다음 인덱스
+        for (let i = types.length - 1; i >= 0; i--) {
+          indices[i]++;
+          if (indices[i] < itemsByType[types[i]].length) break;
+          if (i === 0) { finished = true; break; }
+          indices[i] = 0;
+        }
+
+        // 16ms마다 UI 양도
+        if (performance.now() - startTime > 16) {
+          setTimeout(processChunk, 0);
+          return;
+        }
+      }
+
+      // 완료
+      if (bestCombination.length > 0) {
+        setRaceResults({
+          ...bestResult,
+          combination: bestCombination,
+          selectedRace: raceId
+        });
+      } else {
+        alert('조건을 만족하는 조합이 없습니다.');
+      }
+      setIsCalculating(false);
+    };
+
+    processChunk();
+  }, [items, selectedUniqueItems, selectedUniqueTypes, targetConfigs, includeCritDmg, includeTotalAtk, calculateScore]);
+
+  const handleRaceSelect = (raceId) => {
     if (items.length === 0 && selectedUniqueItems.length === 0) {
       alert('장비를 먼저 추가해주세요.');
       return;
     }
-
-    setIsCalculating(true);
     setSelectedRace(raceId);
-    setShowResults(false);
-    setMCraftSimulation({});
-
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    const result = findBestRaceCombination(raceId, includeCritDmg, includeTotalAtk);
-    setRaceResults(result);
-    setIsCalculating(false);
-  }, [items, selectedUniqueItems, includeCritDmg, includeTotalAtk, findBestRaceCombination]);
-
-  // M작 시뮬레이션
-  const toggleMCraftSimulation = (itemId) => {
-    setMCraftSimulation(prev => ({ ...prev, [itemId]: !prev[itemId] }));
+    findBestCombination(raceId);
   };
-
-  const toggleAllMCraft = (items, apply) => {
-    const newSim = {};
-    items.forEach(item => { newSim[item.id] = apply; });
-    setMCraftSimulation(newSim);
-  };
-
-  const mCraftCount = Object.values(mCraftSimulation).filter(v => v).length;
-
-  const getSimulatedTotals = useCallback((result) => {
-    if (!result) return null;
-    
-    const hasMCraft = Object.values(mCraftSimulation).some(v => v);
-    if (!hasMCraft) {
-      return {
-        totals: result.totals, runeInfo: result.runeInfo,
-        totalShortage: result.totalShortage, allTargetsMet: result.allTargetsMet,
-        raceTotal: result.raceTotal, critDmgTotal: result.critDmgTotal, totalAtkTotal: result.totalAtkTotal
-      };
-    }
-    
-    const simulatedTotals = {};
-    allOptionTypes.forEach(option => {
-      let total = 0;
-      result.items.forEach(item => {
-        const baseValue = item.options[option.id] || 0;
-        if (baseValue > 0 && mCraftSimulation[item.id]) {
-          const opt = allOptionTypes.find(o => o.id === option.id);
-          total += tierMaxValues[item.tier][opt.group];
-        } else {
-          total += baseValue;
-        }
-      });
-      simulatedTotals[option.id] = total;
-    });
-    
-    const simulatedRuneInfo = {};
-    let simulatedShortage = 0;
-    
-    baseOptionTypes.forEach(option => {
-      const target = targetValues[option.id];
-      if (target > 0) {
-        const achieved = simulatedTotals[option.id];
-        const diff = target - achieved;
-        if (diff > 0) {
-          const runeMax = runeMaxValues[option.id] || 0;
-          simulatedRuneInfo[option.id] = { needed: Math.min(diff, runeMax), shortage: Math.max(0, diff - runeMax) };
-          simulatedShortage += Math.max(0, diff - runeMax);
-        } else if (diff < 0) {
-          simulatedRuneInfo[option.id] = { needed: 0, shortage: 0, excess: Math.abs(diff) };
-        } else {
-          simulatedRuneInfo[option.id] = { needed: 0, shortage: 0 };
-        }
-      }
-    });
-    
-    return {
-      totals: simulatedTotals, runeInfo: simulatedRuneInfo,
-      totalShortage: simulatedShortage, allTargetsMet: simulatedShortage === 0,
-      raceTotal: simulatedTotals[selectedRace] || 0,
-      critDmgTotal: simulatedTotals.critDmg || 0,
-      totalAtkTotal: simulatedTotals.totalAtk || 0
-    };
-  }, [mCraftSimulation, targetValues, selectedRace]);
 
   const raceNames = { demon: '악마', boss: '보스', primate: '영장' };
 
+  // ===== 렌더링 =====
   return (
-    <div className="eq-calc-container">
+    <div className="calc-container">
+      <style>{`
+        .calc-container { min-height: 100vh; background: #fff; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #333; }
+        .calc-container * { box-sizing: border-box; }
+        .wrapper { max-width: 900px; margin: 0 auto; }
+        .header { margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #e0e0e0; }
+        .title { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+        .subtitle { color: #888; font-size: 13px; margin: 0; }
+        .section { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
+        .section-title { font-size: 14px; font-weight: 600; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+        .badge { font-size: 11px; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
+        .badge.selected { background: #333; color: #fff; }
+        
+        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+        .input-box { background: #f8f8f8; border-radius: 4px; padding: 10px; }
+        .input-box .label { font-size: 12px; font-weight: 500; margin-bottom: 6px; display: block; }
+        .input-row { display: flex; gap: 6px; }
+        .input-row .input { flex: 1; }
+        .input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        .input:focus { outline: none; border-color: #666; }
+        .input-hint { font-size: 10px; color: #999; margin-top: 4px; }
+        
+        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn { flex: 1; min-width: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+        .btn:hover { background: #f5f5f5; }
+        .btn.active { background: #333; color: #fff; border-color: #333; }
+        .btn-sm { padding: 6px 12px; min-width: auto; flex: none; }
+        
+        .form-row { display: flex; gap: 8px; margin-bottom: 12px; }
+        .form-row > div { flex: 1; }
+        .select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        
+        .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; margin-bottom: 12px; }
+        .option-btn { padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; text-align: left; }
+        .option-btn.selected { background: #f0f0f0; border-color: #333; }
+        .option-name { font-size: 11px; font-weight: 500; }
+        .option-input { width: 100%; padding: 4px; border: 1px solid #ddd; border-radius: 3px; margin-top: 4px; font-size: 12px; }
+        .option-section-title { font-size: 11px; color: #888; margin: 8px 0 6px; }
+        
+        .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+        .list-header-left { display: flex; align-items: center; gap: 8px; }
+        .list-header-right { display: flex; gap: 6px; }
+        .toggle-btn, .clear-btn { padding: 4px 10px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+        .item-count { color: #888; font-size: 12px; }
+        
+        .list-controls { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        .search-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; width: 150px; }
+        .filter-select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        
+        .item-list { max-height: 250px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 4px; }
+        .item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 12px; }
+        .item-row:last-child { border-bottom: none; }
+        .item-row:hover { background: #fafafa; }
+        .item-row-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+        .item-row-right { display: flex; gap: 4px; }
+        .tier-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; background: #f0f0f0; }
+        .tier-badge.심연 { background: #e8f4ff; color: #1a73e8; }
+        .tier-badge.혼돈 { background: #fff3e0; color: #e65100; }
+        .item-options { color: #888; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .card-btn { padding: 2px 8px; border: 1px solid #ddd; border-radius: 3px; background: #fff; cursor: pointer; font-size: 11px; }
+        
+        .unique-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+        .unique-row.selected { background: #333; color: #fff; }
+        .unique-row.selected .item-options { color: #ccc; }
+        .select-btn { padding: 2px 8px; border: 1px solid #ddd; border-radius: 3px; background: #fff; cursor: pointer; font-size: 11px; }
+        .select-btn.selected { background: #333; color: #fff; border-color: #333; }
+        .passive-text { font-size: 10px; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        .unique-row.selected .passive-text { background: #555; }
+        
+        .race-btn-group { display: flex; gap: 8px; margin-bottom: 12px; }
+        .race-btn { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .race-btn:hover { background: #f5f5f5; }
+        .race-btn.active { background: #333; color: #fff; border-color: #333; }
+        .race-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .toggle-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 8px 12px; background: #f8f8f8; border-radius: 4px; }
+        .toggle-label { font-size: 13px; }
+        .toggle-btn-sm { padding: 4px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+        .toggle-btn-sm.active { background: #333; color: #fff; border-color: #333; }
+        
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .spinner { width: 30px; height: 30px; border: 3px solid #f0f0f0; border-top-color: #333; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 10px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .result-card { background: #f8f8f8; border-radius: 6px; padding: 16px; }
+        .result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .result-badge { background: #333; color: #fff; padding: 4px 12px; border-radius: 4px; font-size: 13px; font-weight: 500; }
+        .result-meta { color: #888; font-size: 12px; }
+        
+        .result-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .summary-item { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; text-align: center; }
+        .summary-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+        .summary-value { font-size: 20px; font-weight: 600; }
+        
+        .sub-title { font-size: 12px; font-weight: 500; color: #666; margin: 16px 0 8px; }
+        
+        .equip-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; margin-bottom: 8px; }
+        .equip-card.unique { border-left: 3px solid #9c27b0; }
+        .equip-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .equip-name { font-weight: 500; }
+        .grade-tag { font-size: 11px; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+        .grade-tag.good { background: linear-gradient(135deg, #4caf50, #8bc34a); color: #fff; }
+        .grade-tag.mid { background: linear-gradient(135deg, #ff9800, #ffc107); color: #fff; }
+        .grade-tag.high { background: linear-gradient(135deg, #f44336, #ff5722); color: #fff; }
+        .grade-tag.unique { background: #9c27b0; color: #fff; }
+        .equip-options { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+        .opt-item { display: flex; align-items: center; gap: 4px; }
+        .opt-name { color: #666; }
+        .opt-val { font-weight: 500; }
+        .opt-upgrade { color: #4caf50; }
+        .opt-grade { font-size: 10px; color: #888; }
+        .passive-info { font-size: 10px; color: #9c27b0; margin-top: 6px; }
+        
+        .target-item { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px 12px; margin-bottom: 6px; }
+        .target-item.achieved { border-left: 3px solid #4caf50; }
+        .target-item.failed { border-left: 3px solid #f44336; background: #fff5f5; }
+        .target-item.excess { border-left: 3px solid #ff9800; }
+        .target-header { display: flex; justify-content: space-between; align-items: center; }
+        .target-name { font-weight: 500; font-size: 12px; }
+        .target-slots { font-size: 10px; color: #888; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        .target-slots.exceeded { background: #ffebee; color: #f44336; font-weight: 500; }
+        .target-detail { font-size: 11px; color: #666; margin-top: 4px; }
+        .target-status { font-size: 11px; margin-top: 4px; font-weight: 500; }
+        .target-status.ok { color: #4caf50; }
+        .target-status.warn { color: #ff9800; }
+        .target-status.err { color: #f44336; }
+        
+        .final-box { margin-top: 16px; padding: 12px; border-radius: 4px; background: #e8f5e9; border: 1px solid #c8e6c9; }
+        .final-box.error { background: #ffebee; border-color: #ffcdd2; }
+        .final-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+        .final-detail { font-size: 12px; color: #666; }
+        
+        .empty-state { text-align: center; padding: 30px; color: #888; font-size: 13px; }
+        .hint { font-size: 11px; color: #888; margin-top: 8px; }
+        
+        @media (max-width: 600px) {
+          .calc-container { padding: 12px; }
+          .section { padding: 12px; }
+          .grid-3 { grid-template-columns: repeat(2, 1fr); }
+          .btn-group { flex-direction: column; }
+          .race-btn-group { flex-direction: column; }
+          .form-row { flex-direction: column; }
+          .result-summary { grid-template-columns: repeat(2, 1fr); }
+        }
+      `}</style>
+
       <div className="wrapper">
         <div className="header">
-            <div className="title-wrapper">
-              <h1 className="title">장비 옵션 계산기</h1>
-              <div className="name-card-box">
-                <p className="helper">도움을 주신분</p>
-                <p className="author">(Made by Blue)</p>
-                {/* <div class="badges"> */}
-                  <span className="badge-outline">만두🌸</span>
-                  <span className="badge-outline">헬리🌸터</span>
-                  <span className="badge-outline">😇로소</span>
-                  {/* <span class="badge-outline"><span class="dot blue"></span></span>
-                  <span class="badge-outline"><span class="dot purple"></span></span>
-                  <span class="badge-outline"><span class="dot orange"></span></span>
-                  <span class="badge-outline"><span class="dot pink"></span></span> */}
-                {/* </div> */}
-              </div>
-            </div>
-            <p className="subtitle">목표 수치를 달성하면서 종족 옵션을 최대화하는 조합을 찾습니다</p>
-          </div>
+          <h1 className="title">장비 계승 계산기</h1>
+          <p className="subtitle">목표 수치를 달성하면서 종족 옵션을 최대화하는 조합 + 최적 계승 등급 추천</p>
+        </div>
 
-        {/* 목표 수치 */}
+        {/* 목표 설정 */}
         <div className="section">
-          <h2 className="section-title">목표 수치</h2>
+          <h2 className="section-title">목표 설정</h2>
+          <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>각 옵션의 목표 수치와 사용할 부위 수를 설정하세요. (룬 보완 가능)</p>
           <div className="grid-3">
-            {baseOptionTypes.map(option => (
-              <div key={option.id} className="input-box">
-                <label className="label">{option.abbr}</label>
-                <input
-                  type="number" min="0" max="100"
-                  value={targetValues[option.id] === 0 ? '' : targetValues[option.id]}
-                  onChange={(e) => updateTargetValue(option.id, e.target.value)}
-                  className="input" placeholder="0"
-                />
+            {baseOptionTypes.map(opt => (
+              <div key={opt.id} className="input-box">
+                <label className="label">{opt.abbr} <span style={{ fontWeight: 400, color: '#888' }}>(룬 최대 {runeMaxValues[opt.id]})</span></label>
+                <div className="input-row">
+                  <input type="number" className="input" placeholder="목표" value={targetConfigs[opt.id].value || ''} onChange={e => updateTargetConfig(opt.id, 'value', e.target.value)} />
+                  <input type="number" className="input" placeholder="부위" value={targetConfigs[opt.id].slots || ''} onChange={e => updateTargetConfig(opt.id, 'slots', e.target.value)} style={{ maxWidth: 60 }} />
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* 계산 모드 */}
+        {/* 모드 선택 */}
         <div className="section">
-          <h2 className="section-title">계산 모드</h2>
+          <h2 className="section-title">데이터 모드</h2>
           <div className="btn-group">
-            {/* <button
-              onClick={() => {
-                setUseActualValues(false);
-                setIsTestMode(false);
-                setItems([]);
-                setUniqueEquipments([]);
-                cancelEdit();
-                resetResults();
-              }}
-              className={`btn ${!useActualValues && !isTestMode ? 'btn-active' : ''}`}
-            >
-              최대값 기준
-            </button> */}
-            <button
-              onClick={() => {
-                setUseActualValues(true);
-                setIsTestMode(false);
-                setItems(loadFromStorage());
-                setUniqueEquipments(loadUniqueFromStorage());
-                cancelEdit();
-                resetResults();
-              }}
-              className={`btn ${useActualValues && !isTestMode ? 'btn-active' : ''}`}
-            >
-              실제 수치 입력
-            </button>
-            <button
-              onClick={() => {
-                setUseActualValues(true);
-                setIsTestMode(true);
-                setItems(generateDummyData(250));
-                setUniqueEquipments([]);
-                cancelEdit();
-                resetResults();
-              }}
-              className={`btn ${isTestMode ? 'btn-active' : ''}`}
-            >
-              테스트 모드
-            </button>
+            <button className={`btn ${!isTestMode ? 'active' : ''}`} onClick={() => { setIsTestMode(false); setItems(loadFromStorage(STORAGE_KEY)); setRaceResults(null); }}>실제 데이터</button>
+            <button className={`btn ${isTestMode ? 'active' : ''}`} onClick={() => { setIsTestMode(true); generateDummyData(250); }}>테스트</button>
           </div>
-          
-          {isTestMode && (
-            <div className="test-mode-control">
-              <span className="test-mode-label">더미 생성:</span>
-              <button onClick={() => { setItems(generateDummyData(50)); resetResults(); }} className="btn btn-sm">50개</button>
-              <button onClick={() => { setItems(generateDummyData(100)); resetResults(); }} className="btn btn-sm">100개</button>
-              <button onClick={() => { setItems(generateDummyData(250)); resetResults(); }} className="btn btn-sm">250개</button>
-            </div>
-          )}
-          
-          {useActualValues && !isTestMode && (
-            <div className="excel-control">
-              <span className="excel-label">엑셀:</span>
-              <label className="btn btn-sm excel-upload-btn">
-                업로드
-                <input type="file" accept=".csv,.txt" onChange={handleExcelUpload} style={{ display: 'none' }} />
+          {!isTestMode && (
+            <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
+                엑셀 업로드 <input type="file" accept=".csv" onChange={handleExcelUpload} style={{ display: 'none' }} />
               </label>
-              <button onClick={downloadExcel} className="btn btn-sm">다운로드</button>
-              <span className="excel-hint">CSV (UTF-8)</span>
+              <button className="btn btn-sm" onClick={downloadExcel}>엑셀 다운로드</button>
+              <span className="hint">CSV (UTF-8)</span>
             </div>
           )}
-          
-          <p className="hint">
-            {isTestMode ? '테스트 모드: 더미 데이터로 테스트합니다.' : 
-             useActualValues ? '실제 수치를 입력합니다. 자동 저장됩니다.' : '단계별 최대 수치로 계산합니다.'}
-          </p>
         </div>
 
         {/* 일반 장비 입력 */}
         <div className="section">
-          <h2 className="section-title">{editingItemId ? '일반 장비 수정' : '일반 장비 추가'}</h2>
-          
+          <h2 className="section-title">{editingItemId ? '장비 수정' : '일반 장비 추가'}</h2>
           <div className="form-row">
             <div>
-              <label className="label">종류</label>
-              <select value={newItem.itemType} onChange={(e) => setNewItem(prev => ({ ...prev, itemType: e.target.value }))} className="select">
-                {itemTypes.map(type => <option key={type} value={type}>{type}</option>)}
+              <label className="label" style={{ fontSize: 11, color: '#888' }}>종류</label>
+              <select className="select" value={newItem.itemType} onChange={e => setNewItem(p => ({ ...p, itemType: e.target.value }))}>
+                {itemTypes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <label className="label">단계</label>
-              <select value={newItem.tier} onChange={(e) => updateNewItemTier(e.target.value)} className="select">
-                <option value="태초">태초</option>
+              <label className="label" style={{ fontSize: 11, color: '#888' }}>단계</label>
+              <select className="select" value={newItem.tier} onChange={e => updateNewItemTier(e.target.value)}>
                 <option value="혼돈">혼돈</option>
                 <option value="심연">심연</option>
               </select>
             </div>
           </div>
-
           <div className="option-section-title">기본 옵션</div>
           <div className="option-grid">
-            {baseOptionTypes.map(option => {
-              const isSelected = newItem.options[option.id] !== undefined;
-              const maxValue = tierMaxValues[newItem.tier][option.group];
+            {baseOptionTypes.map(opt => {
+              const sel = newItem.options[opt.id] !== undefined;
+              const max = tierMaxValues[newItem.tier][opt.group];
               return (
-                <button key={option.id} onClick={() => toggleNewItemOption(option.id)} className={`option-btn ${isSelected ? 'option-selected' : ''}`}>
-                  <div className="option-name">{option.abbr}</div>
-                  {isSelected && (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      {useActualValues ? (
-                        <input type="number" min="0" max={maxValue} value={newItem.options[option.id] || ''} onChange={(e) => updateNewItemOptionValue(option.id, e.target.value)} className="option-input" placeholder="0" />
-                      ) : (
-                        <div className="option-max">최대: {maxValue}</div>
-                      )}
-                    </div>
-                  )}
+                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewItemOption(opt.id)}>
+                  <div className="option-name">{opt.abbr}</div>
+                  {sel && <input type="number" className="option-input" min="0" max={max} value={newItem.options[opt.id] || ''} onChange={e => updateNewItemOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
                 </button>
               );
             })}
           </div>
-
           <div className="option-section-title">딜러 옵션</div>
           <div className="option-grid">
-            {bonusOptionTypes.map(option => {
-              const isSelected = newItem.options[option.id] !== undefined;
-              const maxValue = tierMaxValues[newItem.tier][option.group];
+            {bonusOptionTypes.map(opt => {
+              const sel = newItem.options[opt.id] !== undefined;
+              const max = tierMaxValues[newItem.tier][opt.group];
               return (
-                <button key={option.id} onClick={() => toggleNewItemOption(option.id)} className={`option-btn ${isSelected ? 'option-selected' : ''}`}>
-                  <div className="option-name">{option.abbr}</div>
-                  {isSelected && (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      {useActualValues ? (
-                        <input type="number" min="0" max={maxValue} value={newItem.options[option.id] || ''} onChange={(e) => updateNewItemOptionValue(option.id, e.target.value)} className="option-input" placeholder="0" />
-                      ) : (
-                        <div className="option-max">최대: {maxValue}</div>
-                      )}
-                    </div>
-                  )}
+                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewItemOption(opt.id)}>
+                  <div className="option-name">{opt.abbr}</div>
+                  {sel && <input type="number" className="option-input" min="0" max={max} value={newItem.options[opt.id] || ''} onChange={e => updateNewItemOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
                 </button>
               );
             })}
           </div>
-
           <div className="btn-group">
             {editingItemId ? (
               <>
-                <button onClick={saveEditItem} className="btn btn-active">수정 완료</button>
-                <button onClick={cancelEdit} className="btn">취소</button>
+                <button className="btn active" onClick={saveEditItem}>수정 완료</button>
+                <button className="btn" onClick={cancelEdit}>취소</button>
               </>
             ) : (
-              <button onClick={addItem} className="btn btn-active">추가</button>
+              <button className="btn active" onClick={addItem}>추가</button>
             )}
           </div>
         </div>
@@ -1139,384 +1054,283 @@ const calculateCombinationScore = useCallback((combination, raceId, withCritDmg,
               <span className="item-count">({filteredItems.length}/{items.length})</span>
             </div>
             <div className="list-header-right">
-              <button onClick={() => setIsListExpanded(!isListExpanded)} className="toggle-btn">
-                {isListExpanded ? '접기' : '펼치기'}
-              </button>
-              {items.length > 0 && <button onClick={clearAllItems} className="clear-btn">전체 삭제</button>}
+              <button className="toggle-btn" onClick={() => setIsListExpanded(!isListExpanded)}>{isListExpanded ? '접기' : '펼치기'}</button>
+              {items.length > 0 && <button className="clear-btn" onClick={clearAllItems}>전체 삭제</button>}
             </div>
           </div>
-
           {isListExpanded && (
             <>
-              <div className="list-controls">
-                <input type="text" placeholder="종류, 단계, 옵션 검색" value={searchText} onChange={(e) => setSearchText(e.target.value)} className="search-input" />
-                <select value={filterItemType} onChange={(e) => setFilterItemType(e.target.value)} className="filter-select">
-                  <option value="전체">전체 종류</option>
-                  {itemTypes.map(type => <option key={type} value={type}>{type}</option>)}
-                </select>
-                <select value={filterTier} onChange={(e) => setFilterTier(e.target.value)} className="filter-select">
-                  <option value="전체">전체 단계</option>
-                  <option value="태초">태초</option>
-                  <option value="혼돈">혼돈</option>
-                  <option value="심연">심연</option>
-                </select>
-              </div>
-              
-              {filteredItems.length === 0 ? (
-                <div className="empty-state">
-                  {items.length === 0 ? '추가된 장비가 없습니다' : '검색 결과가 없습니다'}
+              {items.length > 5 && (
+                <div className="list-controls">
+                  <input className="search-input" placeholder="단계, 장비, 옵션 검색" value={searchText} onChange={e => setSearchText(e.target.value)} />
+                  <select className="filter-select" value={filterTier} onChange={e => setFilterTier(e.target.value)}>
+                    <option value="전체">전체 단계</option>
+                    <option value="혼돈">혼돈</option>
+                    <option value="심연">심연</option>
+                  </select>
                 </div>
+              )}
+              {filteredItems.length === 0 ? (
+                <div className="empty-state">{items.length === 0 ? '장비를 추가해주세요' : '검색 결과 없음'}</div>
               ) : (
-                <div className="item-list-scroll">
-                  {filteredItems.map(item => {
-                    const optionsText = Object.entries(item.options)
-                      .map(([optId, val]) => `${allOptionTypes.find(o => o.id === optId)?.abbr}:${val}`)
-                      .join(' ');
-                    return (
-                      <div key={item.id} className="item-row">
-                        <div className="item-row-left">
-                          <span className="tier-badge">{item.tier}</span>
-                          <span className="item-type-name">{item.itemType}</span>
-                          <span className="item-options-text">{optionsText}</span>
-                        </div>
-                        <div className="item-row-right">
-                          <button onClick={() => startEditItem(item)} className="card-btn">수정</button>
-                          <button onClick={() => removeItem(item.id)} className="card-btn">삭제</button>
-                        </div>
+                <div className="item-list">
+                  {filteredItems.map(item => (
+                    <div key={item.id} className="item-row">
+                      <div className="item-row-left">
+                        <span className={`tier-badge ${item.tier}`}>{item.tier}</span>
+                        <span style={{ fontWeight: 500 }}>{item.itemType}</span>
+                        <span className="item-options">
+                          {Object.entries(item.options).map(([k, v]) => `${allOptionTypes.find(o => o.id === k)?.abbr}:${v}`).join(' ')}
+                        </span>
                       </div>
-                    );
-                  })}
+                      <div className="item-row-right">
+                        <button className="card-btn" onClick={() => startEditItem(item)}>수정</button>
+                        <button className="card-btn" onClick={() => removeItem(item.id)}>삭제</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* 유니크 장비 입력 */}
+        {/* 유니크 장비 */}
         <div className="section">
           <h2 className="section-title">
-            {editingUniqueId ? '유니크 장비 수정' : '유니크 장비 추가'}
+            {editingUniqueId ? '유니크 수정' : '유니크 장비 추가'}
             {selectedUniqueItems.length > 0 && <span className="badge selected">{selectedUniqueItems.length}/2 선택</span>}
           </h2>
-          
           <div className="form-row">
             <div>
-              <label className="label">부위</label>
-              <select value={newUniqueItem.itemType} onChange={(e) => updateNewUniqueItemType(e.target.value)} className="select">
-                {Object.keys(uniqueItemDefs).map(type => <option key={type} value={type}>{type}</option>)}
+              <label className="label" style={{ fontSize: 11, color: '#888' }}>부위</label>
+              <select className="select" value={newUniqueItem.itemType} onChange={e => updateNewUniqueItemType(e.target.value)}>
+                {Object.keys(uniqueItemDefs).map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <label className="label">장비명</label>
-              <select value={newUniqueItem.uniqueName} onChange={(e) => updateNewUniqueName(e.target.value)} className="select">
+              <label className="label" style={{ fontSize: 11, color: '#888' }}>장비</label>
+              <select className="select" value={newUniqueItem.uniqueName} onChange={e => setNewUniqueItem(p => ({ ...p, uniqueName: e.target.value, passiveValue: 0 }))}>
                 {(uniqueItemDefs[newUniqueItem.itemType] || []).map(u => <option key={u.name} value={u.name}>{u.name}</option>)}
               </select>
             </div>
           </div>
-
-          {/* 고유옵션 입력 */}
           {(() => {
             const def = uniqueDefMap[newUniqueItem.uniqueName];
-            if (!def) return null;
-            return (
-              <div className="passive-input-box">
-                <label className="label">고유옵션: {def.passive} ({def.min}~{def.max}{def.unit})</label>
-                <input
-                  type="number"
-                  min={def.min}
-                  max={def.max}
-                  value={newUniqueItem.passiveValue || ''}
-                  onChange={(e) => setNewUniqueItem(prev => ({ ...prev, passiveValue: parseInt(e.target.value) || 0 }))}
-                  className="input"
-                  placeholder={`${def.min}~${def.max}`}
-                />
+            return def && (
+              <div className="input-box" style={{ marginBottom: 12 }}>
+                <label className="label">고유: {def.passive} ({def.min}~{def.max}{def.unit})</label>
+                <input type="number" className="input" min={def.min} max={def.max} value={newUniqueItem.passiveValue || ''} onChange={e => setNewUniqueItem(p => ({ ...p, passiveValue: parseInt(e.target.value) || 0 }))} />
               </div>
             );
           })()}
-
-          <div className="option-section-title">기본 옵션 (4개)</div>
+          <div className="option-section-title">옵션 (계승 불가 - 현재 수치)</div>
           <div className="option-grid">
-            {baseOptionTypes.map(option => {
-              const isSelected = newUniqueItem.options[option.id] !== undefined;
-              const maxValue = tierMaxValues['유니크'][option.group];
+            {[...baseOptionTypes, ...bonusOptionTypes].map(opt => {
+              const sel = newUniqueItem.options[opt.id] !== undefined;
+              const max = tierMaxValues['유니크'][opt.group];
               return (
-                <button key={option.id} onClick={() => toggleNewUniqueOption(option.id)} className={`option-btn ${isSelected ? 'option-selected' : ''}`}>
-                  <div className="option-name">{option.abbr}</div>
-                  {isSelected && (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      {useActualValues ? (
-                        <input type="number" min="0" max={maxValue} value={newUniqueItem.options[option.id] || ''} onChange={(e) => updateNewUniqueOptionValue(option.id, e.target.value)} className="option-input" placeholder="0" />
-                      ) : (
-                        <div className="option-max">최대: {maxValue}</div>
-                      )}
-                    </div>
-                  )}
+                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewUniqueOption(opt.id)}>
+                  <div className="option-name">{opt.abbr}</div>
+                  {sel && <input type="number" className="option-input" min="0" max={max} value={newUniqueItem.options[opt.id] || ''} onChange={e => updateNewUniqueOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
                 </button>
               );
             })}
           </div>
-
-          <div className="option-section-title">딜러 옵션</div>
-          <div className="option-grid">
-            {bonusOptionTypes.map(option => {
-              const isSelected = newUniqueItem.options[option.id] !== undefined;
-              const maxValue = tierMaxValues['유니크'][option.group];
-              return (
-                <button key={option.id} onClick={() => toggleNewUniqueOption(option.id)} className={`option-btn ${isSelected ? 'option-selected' : ''}`}>
-                  <div className="option-name">{option.abbr}</div>
-                  {isSelected && (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      {useActualValues ? (
-                        <input type="number" min="0" max={maxValue} value={newUniqueItem.options[option.id] || ''} onChange={(e) => updateNewUniqueOptionValue(option.id, e.target.value)} className="option-input" placeholder="0" />
-                      ) : (
-                        <div className="option-max">최대: {maxValue}</div>
-                      )}
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
           <div className="btn-group">
             {editingUniqueId ? (
               <>
-                <button onClick={saveEditUniqueItem} className="btn btn-active">수정 완료</button>
-                <button onClick={cancelEdit} className="btn">취소</button>
+                <button className="btn active" onClick={saveEditUniqueItem}>수정 완료</button>
+                <button className="btn" onClick={cancelEdit}>취소</button>
               </>
             ) : (
-              <button onClick={addUniqueItem} className="btn btn-active">추가</button>
+              <button className="btn active" onClick={addUniqueItem}>추가</button>
             )}
           </div>
         </div>
 
-        {/* 유니크 장비 목록 */}
+        {/* 유니크 목록 */}
         <div className="section">
           <div className="list-header">
             <div className="list-header-left">
               <h2 className="section-title" style={{ margin: 0 }}>유니크 장비</h2>
               <span className="item-count">({uniqueEquipments.length})</span>
-              {selectedUniqueItems.length > 0 && <span className="badge selected">{selectedUniqueItems.length}개 선택됨</span>}
             </div>
             <div className="list-header-right">
-              <button onClick={() => setIsUniqueListExpanded(!isUniqueListExpanded)} className="toggle-btn">
-                {isUniqueListExpanded ? '접기' : '펼치기'}
-              </button>
-              {uniqueEquipments.length > 0 && <button onClick={clearAllUniqueItems} className="clear-btn">전체 삭제</button>}
+              <button className="toggle-btn" onClick={() => setIsUniqueListExpanded(!isUniqueListExpanded)}>{isUniqueListExpanded ? '접기' : '펼치기'}</button>
+              {uniqueEquipments.length > 0 && <button className="clear-btn" onClick={clearAllUniqueItems}>전체 삭제</button>}
             </div>
           </div>
-
           {isUniqueListExpanded && (
-            <>
-              {uniqueEquipments.length > 3 && (
-                <div className="list-controls">
-                  <input type="text" placeholder="검색..." value={uniqueSearchText} onChange={(e) => setUniqueSearchText(e.target.value)} className="search-input" />
-                </div>
-              )}
-              
-              {filteredUniqueItems.length === 0 ? (
-                <div className="empty-state">
-                  {uniqueEquipments.length === 0 ? '추가된 유니크 장비가 없습니다' : '검색 결과가 없습니다'}
-                </div>
-              ) : (
-                <div className="item-list-scroll">
-                  {filteredUniqueItems.map(item => {
-                    const def = uniqueDefMap[item.uniqueName];
-                    const passiveText = def ? `${def.passive} ${item.passiveValue}${def.unit}` : '';
-                    const optionsText = Object.entries(item.options)
-                      .map(([optId, val]) => `${allOptionTypes.find(o => o.id === optId)?.abbr}:${val}`)
-                      .join(' ');
-                    return (
-                      <div key={item.id} className={`unique-row ${item.selected ? 'selected' : ''}`}>
-                        <div className="item-row-left">
-                          <button onClick={() => toggleUniqueSelection(item.id)} className={`select-btn ${item.selected ? 'selected' : ''}`}>
-                            {item.selected ? '✓' : '○'}
-                          </button>
-                          <span className="unique-name">{item.uniqueName}</span>
-                          <span className="item-type-name">({item.itemType})</span>
-                          <span className="passive-text">{passiveText}</span>
-                          <span className="item-options-text">{optionsText}</span>
-                        </div>
-                        <div className="item-row-right">
-                          <button onClick={() => startEditUniqueItem(item)} className="card-btn">수정</button>
-                          <button onClick={() => removeUniqueItem(item.id)} className="card-btn">삭제</button>
-                        </div>
+            uniqueEquipments.length === 0 ? (
+              <div className="empty-state">유니크 장비를 추가해주세요</div>
+            ) : (
+              <div className="item-list">
+                {uniqueEquipments.map(item => {
+                  const def = uniqueDefMap[item.uniqueName];
+                  return (
+                    <div key={item.id} className={`unique-row ${item.selected ? 'selected' : ''}`}>
+                      <div className="item-row-left">
+                        <button className={`select-btn ${item.selected ? 'selected' : ''}`} onClick={() => toggleUniqueSelection(item.id)}>{item.selected ? '✓' : '○'}</button>
+                        <span style={{ fontWeight: 500 }}>{item.uniqueName}</span>
+                        <span style={{ color: '#888' }}>({item.itemType})</span>
+                        {def && <span className="passive-text">{def.passive} {item.passiveValue}{def.unit}</span>}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+                      <div className="item-row-right">
+                        <button className="card-btn" onClick={() => startEditUniqueItem(item)}>수정</button>
+                        <button className="card-btn" onClick={() => removeUniqueItem(item.id)}>삭제</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
           )}
-          
-          <p className="hint">유니크 장비를 선택하면 해당 부위를 제외하고 나머지 장비에서 조합을 찾습니다. (최대 2개)</p>
+          <p className="hint">유니크는 계승 불가. 선택 시 해당 부위 제외. (최대 2개)</p>
         </div>
 
         {/* 장비 추천 */}
         <div className="section">
           <h2 className="section-title">장비 추천</h2>
-          
-          <div className="crit-toggle">
-            <span className="crit-toggle-label">치피:</span>
-            <button onClick={() => setIncludeCritDmg(!includeCritDmg)} className={`crit-toggle-btn ${includeCritDmg ? 'active' : ''}`}>
-              {includeCritDmg ? 'ON' : 'OFF'}
-            </button>
-            <span className="crit-toggle-label" style={{ marginLeft: '12px' }}>전공:</span>
-            <button onClick={() => setIncludeTotalAtk(!includeTotalAtk)} className={`crit-toggle-btn ${includeTotalAtk ? 'active' : ''}`}>
-              {includeTotalAtk ? 'ON' : 'OFF'}
-            </button>
+          <div className="toggle-row">
+            <span className="toggle-label">치피:</span>
+            <button className={`toggle-btn-sm ${includeCritDmg ? 'active' : ''}`} onClick={() => { setIncludeCritDmg(!includeCritDmg); setRaceResults(null); }}>{includeCritDmg ? 'ON' : 'OFF'}</button>
+            <span className="toggle-label" style={{ marginLeft: 16 }}>전공:</span>
+            <button className={`toggle-btn-sm ${includeTotalAtk ? 'active' : ''}`} onClick={() => { setIncludeTotalAtk(!includeTotalAtk); setRaceResults(null); }}>{includeTotalAtk ? 'ON' : 'OFF'}</button>
           </div>
-          
           <div className="race-btn-group">
             {['demon', 'boss', 'primate'].map(race => (
-              <button key={race} onClick={() => handleRaceSelect(race)} className={`race-btn ${selectedRace === race ? 'active' : ''}`} disabled={isCalculating || (items.length === 0 && selectedUniqueItems.length === 0)}>
+              <button key={race} className={`race-btn ${selectedRace === race ? 'active' : ''}`} onClick={() => handleRaceSelect(race)} disabled={isCalculating || (items.length === 0 && selectedUniqueItems.length === 0)}>
                 {raceNames[race]}
               </button>
             ))}
           </div>
 
-          {isCalculating && <div className="loading">계산 중...</div>}
+          {isCalculating && (
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>최적 조합 분석 중...</p>
+            </div>
+          )}
 
           {raceResults && !isCalculating && (
             <div className="result-card">
               <div className="result-header">
-                <span className="result-badge">{raceNames[selectedRace]} 최적 조합</span>
+                <span className="result-badge">{raceNames[raceResults.selectedRace]} 최적 조합</span>
                 {includeCritDmg && <span className="result-meta">+ 치피</span>}
                 {includeTotalAtk && <span className="result-meta">+ 전공</span>}
+                <span className="result-meta">비용: {raceResults.totalCost}</span>
               </div>
 
-              <div className="mcraft-control">
-                <span className="mcraft-control-label">M작 시뮬레이션</span>
-                <div className="mcraft-control-btns">
-                  <button onClick={() => toggleAllMCraft(raceResults.items, true)} className="btn btn-sm">전체 적용</button>
-                  <button onClick={() => toggleAllMCraft(raceResults.items, false)} className="btn btn-sm">전체 해제</button>
-                  {mCraftCount > 0 && <span className="mcraft-count">{mCraftCount}개</span>}
+              <div className="result-summary">
+                <div className="summary-item">
+                  <div className="summary-label">{raceNames[raceResults.selectedRace]}</div>
+                  <div className="summary-value">{raceResults.raceTotal}</div>
                 </div>
+                {includeCritDmg && (
+                  <div className="summary-item">
+                    <div className="summary-label">치피</div>
+                    <div className="summary-value">{raceResults.critDmgTotal}</div>
+                  </div>
+                )}
+                {includeTotalAtk && (
+                  <div className="summary-item">
+                    <div className="summary-label">전공</div>
+                    <div className="summary-value">{raceResults.totalAtkTotal}</div>
+                  </div>
+                )}
               </div>
 
-              {(() => {
-                const sim = getSimulatedTotals(raceResults);
-                const hasSim = mCraftCount > 0;
-                return (
-                  <>
-                    <div className="result-highlight">
-                      <div className="highlight-row">
-                        <span className="highlight-label">{raceNames[selectedRace]}</span>
-                        <span className="highlight-value">
-                          {hasSim ? (<><span className="value-before">{raceResults.raceTotal}</span><span className="value-arrow">→</span><span className="value-after">{sim.raceTotal}</span></>) : raceResults.raceTotal}
-                        </span>
-                      </div>
-                      {includeCritDmg && (
-                        <div className="highlight-row">
-                          <span className="highlight-label">치피</span>
-                          <span className="highlight-value">
-                            {hasSim ? (<><span className="value-before">{raceResults.critDmgTotal}</span><span className="value-arrow">→</span><span className="value-after">{sim.critDmgTotal}</span></>) : raceResults.critDmgTotal}
-                          </span>
-                        </div>
-                      )}
-                      {includeTotalAtk && (
-                        <div className="highlight-row">
-                          <span className="highlight-label">전공</span>
-                          <span className="highlight-value">
-                            {hasSim ? (<><span className="value-before">{raceResults.totalAtkTotal}</span><span className="value-arrow">→</span><span className="value-after">{sim.totalAtkTotal}</span></>) : raceResults.totalAtkTotal}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+              <div className="sub-title">추천 장비 ({raceResults.combination.length}개)</div>
+              {raceResults.itemGrades.map((ig, idx) => {
+                const item = ig.item;
+                const isUnique = ig.isUnique;
+                const def = isUnique ? uniqueDefMap[item.uniqueName] : null;
+                const gradeClass = ig.gradeString.startsWith('MMM') ? 'high' : ig.gradeString.startsWith('MM') ? 'mid' : ig.gradeString === '계승불가' ? 'unique' : 'good';
 
-                    <div className="sub-title">선택된 장비 (클릭: M작 시뮬)</div>
-                    <div className="selected-items">
-                      {raceResults.items.map((item, idx) => {
-                        const isMCrafted = mCraftSimulation[item.id];
-                        const isUnique = !!item.uniqueName;
-                        const canMCraft = Object.entries(item.options).some(([optId, val]) => {
-                          const opt = allOptionTypes.find(o => o.id === optId);
-                          return val < tierMaxValues[item.tier][opt.group];
-                        });
-                        
-                        const optionsDisplay = Object.entries(item.options).map(([optId, val]) => {
-                          const opt = allOptionTypes.find(o => o.id === optId);
-                          const maxVal = tierMaxValues[item.tier][opt.group];
-                          if (isMCrafted && val < maxVal) {
-                            return <span key={optId}>{opt.abbr}:<span className="strikethrough">{val}</span>→<span className="mcraft-value">{maxVal}</span></span>;
-                          }
-                          return <span key={optId}>{opt.abbr}:{val}</span>;
-                        });
-                        
+                return (
+                  <div key={idx} className={`equip-card ${isUnique ? 'unique' : ''}`}>
+                    <div className="equip-header">
+                      <span className="equip-name">{isUnique ? item.uniqueName : item.itemType} {!isUnique && `(${item.tier})`}</span>
+                      <span className={`grade-tag ${gradeClass}`}>{ig.gradeString}</span>
+                    </div>
+                    <div className="equip-options">
+                      {Object.entries(ig.optionGrades).map(([optId, info]) => {
+                        const opt = allOptionTypes.find(o => o.id === optId);
+                        const upgraded = info.upgraded !== info.current;
                         return (
-                          <div key={idx} className={`selected-item ${isMCrafted ? 'mcrafted' : ''} ${!canMCraft ? 'maxed' : ''} ${isUnique ? 'unique' : ''}`}
-                               onClick={() => canMCraft && toggleMCraftSimulation(item.id)}>
-                            <div className="selected-item-left">
-                              <span className="selected-item-name">
-                                {isUnique ? item.uniqueName : item.itemType} 
-                                {!isUnique && `(${item.tier})`}
-                              </span>
-                              {isUnique && <span className="unique-badge">유니크</span>}
-                              {isUnique && item.passiveValue && (() => {
-                                const def = uniqueDefMap[item.uniqueName];
-                                return def ? <span className="passive-badge">{item.passiveValue}{def.unit}</span> : null;
-                              })()}
-                              {isMCrafted && <span className="mcraft-badge-small">M작</span>}
-                              {!canMCraft && <span className="maxed-badge">MAX</span>}
-                            </div>
-                            <span className="selected-item-options">
-                              {optionsDisplay.map((el, i) => <span key={i}>{i > 0 && ' / '}{el}</span>)}
-                            </span>
-                          </div>
+                          <span key={optId} className="opt-item">
+                            <span className="opt-name">{opt?.abbr}:</span>
+                            {upgraded ? (
+                              <>
+                                <span style={{ textDecoration: 'line-through', color: '#999' }}>{info.current}</span>
+                                <span className="opt-upgrade">→{info.upgraded}</span>
+                              </>
+                            ) : (
+                              <span className="opt-val">{info.current}</span>
+                            )}
+                            {info.grade !== '-' && <span className="opt-grade">({info.grade})</span>}
+                          </span>
                         );
                       })}
                     </div>
-
-                    <div className="sub-title">목표 달성률 {hasSim && <span className="sim-label">M작 적용</span>}</div>
-                    {baseOptionTypes.map(option => {
-                      const target = targetValues[option.id];
-                      if (target === 0) return null;
-                      
-                      const totals = hasSim ? sim.totals : raceResults.totals;
-                      const runeInfo = hasSim ? sim.runeInfo : raceResults.runeInfo;
-                      const achieved = totals[option.id];
-                      const rune = runeInfo[option.id];
-                      const withRune = achieved + (rune?.needed || 0);
-                      const improved = hasSim && achieved > raceResults.totals[option.id];
-                      
-                      return (
-                        <div key={option.id} className={`achievement-item ${improved ? 'improved' : ''}`}>
-                          <div className="achievement-title">{option.name}</div>
-                          <div className="achievement-detail">
-                            목표: {target} / 장비: {achieved}
-                            {improved && <span className="improve-diff"> (+{achieved - raceResults.totals[option.id]})</span>}
-                          </div>
-                          {rune?.needed > 0 && <div className="achievement-detail">룬: {rune.needed}</div>}
-                          {rune?.excess > 0 && <div className="achievement-detail text-warning">초과: +{rune.excess}</div>}
-                          {rune?.shortage > 0 ? (
-                            <div className="achievement-detail text-error">부족: {rune.shortage}</div>
-                          ) : withRune >= target && (
-                            <div className="achievement-detail text-success">달성 ({withRune})</div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {(hasSim ? sim.totalShortage : raceResults.totalShortage) > 0 ? (
-                      <div className="summary-box">
-                        <div className="summary-title">일부 목표 미달성</div>
-                        <div className="summary-detail">
-                          {raceResults.targetsMet}/{raceResults.totalTargets} 목표 달성 / M작으로 보완 가능
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="summary-box success">
-                        <div className="summary-title">모든 목표 달성 가능</div>
-                        <div className="summary-detail">
-                          {raceNames[selectedRace]}: {hasSim ? sim.raceTotal : raceResults.raceTotal}
-                          {includeCritDmg && ` / 치피: ${hasSim ? sim.critDmgTotal : raceResults.critDmgTotal}`}
-                          {includeTotalAtk && ` / 전공: ${hasSim ? sim.totalAtkTotal : raceResults.totalAtkTotal}`}
-                        </div>
-                      </div>
-                    )}
-                  </>
+                    {def && <div className="passive-info">{def.passive}: {item.passiveValue}{def.unit}</div>}
+                  </div>
                 );
-              })()}
+              })}
+
+              <div className="sub-title">목표 달성 현황</div>
+              {baseOptionTypes.map(opt => {
+                const detail = raceResults.optionDetails[opt.id];
+                if (!detail) return null;
+                const slotExceeded = detail.usedSlots > detail.targetSlots;
+                const status = slotExceeded ? 'failed' : detail.shortage > 0 ? 'failed' : detail.excess > 3 ? 'excess' : 'achieved';
+                return (
+                  <div key={opt.id} className={`target-item ${status}`}>
+                    <div className="target-header">
+                      <span className="target-name">{opt.name}</span>
+                      <span className={`target-slots ${slotExceeded ? 'exceeded' : ''}`}>
+                        {detail.usedSlots}/{detail.targetSlots} 부위
+                        {slotExceeded && ' ⚠'}
+                      </span>
+                    </div>
+                    <div className="target-detail">
+                      목표: {detail.target} / 계승: {detail.fromGear}
+                      {detail.runeNeeded > 0 && <span style={{ color: '#1a73e8' }}> + 룬 {detail.runeNeeded}</span>}
+                      {' '}= <strong>{detail.final}</strong>
+                    </div>
+                    {slotExceeded ? (
+                      <div className="target-status err">⚠ 부위 초과: {detail.usedSlots - detail.targetSlots}개</div>
+                    ) : detail.shortage > 0 ? (
+                      <div className="target-status err">⚠ 부족: {detail.shortage}</div>
+                    ) : detail.excess > 3 ? (
+                      <div className="target-status warn">⚠ 초과: +{detail.excess} (3 이내 권장)</div>
+                    ) : detail.excess > 0 ? (
+                      <div className="target-status ok">✓ 달성 (+{detail.excess})</div>
+                    ) : (
+                      <div className="target-status ok">✓ 정확히 달성</div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className={`final-box ${raceResults.allTargetsMet ? '' : 'error'}`}>
+                {raceResults.allTargetsMet ? (
+                  <>
+                    <div className="final-title">✓ 모든 목표 달성</div>
+                    <div className="final-detail">
+                      {raceNames[raceResults.selectedRace]}: {raceResults.raceTotal}
+                      {includeCritDmg && ` / 치피: ${raceResults.critDmgTotal}`}
+                      {includeTotalAtk && ` / 전공: ${raceResults.totalAtkTotal}`}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="final-title">⚠ 일부 목표 미달성</div>
+                    <div className="final-detail">장비를 추가하거나 부위 수를 조정해보세요.</div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
