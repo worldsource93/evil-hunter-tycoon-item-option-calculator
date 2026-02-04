@@ -1388,7 +1388,7 @@ const EquipmentCalculator = () => {
           {isListExpanded && (
             <>
               <div className="list-controls">
-                <input type="text" placeholder="검색..." value={searchText} onChange={(e) => setSearchText(e.target.value)} className="search-input" />
+                <input type="text" placeholder="종류, 단계, 옵션 검색" value={searchText} onChange={(e) => setSearchText(e.target.value)} className="search-input" />
                 <select value={filterItemType} onChange={(e) => setFilterItemType(e.target.value)} className="filter-select">
                   <option value="전체">전체 종류</option>
                   {itemTypes.map(type => <option key={type} value={type}>{type}</option>)}
