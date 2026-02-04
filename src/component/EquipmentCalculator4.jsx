@@ -156,10 +156,10 @@ const EquipmentCalculator = () => {
   // 상태 관리
   const [targetConfigs, setTargetConfigs] = useState({
     critRate: { value: 50, slots: 3 },
-    atkSpeed: { value: 40, slots: 2 },
-    evasion: { value: 40, slots: 2 },
+    atkSpeed: { value: 34, slots: 2 },
+    evasion: { value: 34, slots: 2 },
     dmgReduce: { value: 0, slots: 0 },
-    lifesteal: { value: 40, slots: 2 },
+    lifesteal: { value: 0, slots: 0 },
     moveSpeed: { value: 0, slots: 0 }
   });
 
@@ -209,51 +209,84 @@ const EquipmentCalculator = () => {
   }, [items, searchText, filterTier]);
 
   // 더미 데이터 생성
+  // const generateDummyData = useCallback((count) => {
+  //   const newItems = [];
+  //   const tiers = ['혼돈', '심연'];
+  //   const races = ['demon', 'boss', 'primate'];
+  //   const activeBaseOpts = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0);
+
+  //   for (let i = 0; i < count; i++) {
+  //     const tier = tiers[Math.floor(Math.random() * tiers.length)];
+  //     const itemType = itemTypes[i % itemTypes.length];
+  //     const options = {};
+  //     const quality = Math.random();
+
+  //     // 종족 필수
+  //     const race = races[Math.floor(Math.random() * 3)];
+  //     options[race] = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+
+  //     if (quality < 0.35) {
+  //       // 1티어: 종족+치피+전공+1유효
+  //       options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+  //       options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
+  //       if (activeBaseOpts.length > 0) {
+  //         const baseOpt = activeBaseOpts[Math.floor(Math.random() * activeBaseOpts.length)];
+  //         options[baseOpt.id] = Math.floor(tierMaxValues[tier][baseOpt.group] * (0.7 + Math.random() * 0.3));
+  //       }
+  //     } else if (quality < 0.6) {
+  //       // 2티어: 종족+치피+2유효
+  //       options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+  //       const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+  //       shuffled.slice(0, 2).forEach(opt => {
+  //         options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
+  //       });
+  //     } else if (quality < 0.8) {
+  //       // 3티어: 종족+전공+2유효
+  //       options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
+  //       const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+  //       shuffled.slice(0, 2).forEach(opt => {
+  //         options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
+  //       });
+  //     } else {
+  //       // 나머지: 종족+1~2유효
+  //       const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
+  //       const numOpts = 1 + Math.floor(Math.random() * 2);
+  //       shuffled.slice(0, numOpts).forEach(opt => {
+  //         options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.6 + Math.random() * 0.4));
+  //       });
+  //     }
+
+  //     newItems.push({ id: `dummy-${Date.now()}-${i}`, tier, itemType, options });
+  //   }
+  //   setItems(newItems);
+  //   setRaceResults(null);
+  // }, [targetConfigs]);
+
+  // 더미 데이터 생성 (심연 + 치피+종족+전공+1유효옵션)
   const generateDummyData = useCallback((count) => {
     const newItems = [];
-    const tiers = ['혼돈', '심연'];
     const races = ['demon', 'boss', 'primate'];
     const activeBaseOpts = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0);
 
     for (let i = 0; i < count; i++) {
-      const tier = tiers[Math.floor(Math.random() * tiers.length)];
+      const tier = '심연'; // 모두 심연
       const itemType = itemTypes[i % itemTypes.length];
       const options = {};
-      const quality = Math.random();
 
-      // 종족 필수
+      // 종족 필수 (70~100% 범위)
       const race = races[Math.floor(Math.random() * 3)];
       options[race] = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
 
-      if (quality < 0.35) {
-        // 1티어: 종족+치피+전공+1유효
-        options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
-        options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
-        if (activeBaseOpts.length > 0) {
-          const baseOpt = activeBaseOpts[Math.floor(Math.random() * activeBaseOpts.length)];
-          options[baseOpt.id] = Math.floor(tierMaxValues[tier][baseOpt.group] * (0.7 + Math.random() * 0.3));
-        }
-      } else if (quality < 0.6) {
-        // 2티어: 종족+치피+2유효
-        options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
-        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
-        shuffled.slice(0, 2).forEach(opt => {
-          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
-        });
-      } else if (quality < 0.8) {
-        // 3티어: 종족+전공+2유효
-        options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
-        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
-        shuffled.slice(0, 2).forEach(opt => {
-          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.7 + Math.random() * 0.3));
-        });
-      } else {
-        // 나머지: 종족+1~2유효
-        const shuffled = [...activeBaseOpts].sort(() => Math.random() - 0.5);
-        const numOpts = 1 + Math.floor(Math.random() * 2);
-        shuffled.slice(0, numOpts).forEach(opt => {
-          options[opt.id] = Math.floor(tierMaxValues[tier][opt.group] * (0.6 + Math.random() * 0.4));
-        });
+      // 치피 필수
+      options.critDmg = Math.floor(tierMaxValues[tier].C * (0.7 + Math.random() * 0.3));
+
+      // 전공 필수
+      options.totalAtk = Math.floor(tierMaxValues[tier].D * (0.7 + Math.random() * 0.3));
+
+      // 1개 유효옵션 (목표 설정된 옵션 중 랜덤)
+      if (activeBaseOpts.length > 0) {
+        const baseOpt = activeBaseOpts[Math.floor(Math.random() * activeBaseOpts.length)];
+        options[baseOpt.id] = Math.floor(tierMaxValues[tier][baseOpt.group] * (0.7 + Math.random() * 0.3));
       }
 
       newItems.push({ id: `dummy-${Date.now()}-${i}`, tier, itemType, options });
