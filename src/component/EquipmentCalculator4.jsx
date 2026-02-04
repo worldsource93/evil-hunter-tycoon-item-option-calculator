@@ -400,7 +400,8 @@ const EquipmentCalculator = () => {
         delete newOptions[optionId];
       } else {
         const option = allOptionTypes.find(o => o.id === optionId);
-        newOptions[optionId] = useActualValues ? 0 : tierMaxValues[prev.tier][option.group];
+        const maxValue = tierMaxValues[prev.tier][option.group];
+        newOptions[optionId] = maxValue; // 항상 최대값으로 설정
       }
       return { ...prev, options: newOptions };
     });
@@ -482,7 +483,8 @@ const EquipmentCalculator = () => {
         delete newOptions[optionId];
       } else {
         const option = allOptionTypes.find(o => o.id === optionId);
-        newOptions[optionId] = useActualValues ? 0 : tierMaxValues['유니크'][option.group];
+        const maxValue = tierMaxValues['유니크'][option.group];
+        newOptions[optionId] = maxValue; // 항상 최대값으로 설정
       }
       return { ...prev, options: newOptions };
     });
@@ -1168,7 +1170,6 @@ const EquipmentCalculator = () => {
         .badge-outline .dot.purple { background: #a371f7; }
         .badge-outline .dot.orange { background: #d29922; }
         .badge-outline .dot.pink { background: #db61a2; }
-
 
         @media (max-width: 480px) {
           .eq-calc-container { padding: 12px; }
