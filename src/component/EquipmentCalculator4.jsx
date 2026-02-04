@@ -345,7 +345,19 @@ const EquipmentCalculator = () => {
           const options = {};
           headers.forEach((h, idx) => {
             const optId = headerToOptionId[h];
-            if (optId) { const v = parseInt(vals[idx]); if (v > 0) options[optId] = v; }
+            if (!optId) return;
+          
+            const raw = vals[idx];
+          
+            // 빈 셀은 옵션 없음
+            if (raw === '') return;
+          
+            const v = Number(raw);
+          
+            // 0 포함한 숫자만 옵션으로 인정
+            if (!Number.isNaN(v)) {
+              options[optId] = v;
+            }
           });
 
           if (uniqueName && allUniqueNames.includes(uniqueName)) {
