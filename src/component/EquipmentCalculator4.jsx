@@ -24,6 +24,8 @@ const bonusOptionTypes = [
 ];
 
 const allOptionTypes = [...baseOptionTypes, ...bonusOptionTypes];
+const raceOptionIds = ['demon', 'boss', 'primate'];
+const dealerOptionIds = ['demon', 'boss', 'primate', 'critDmg', 'totalAtk'];
 
 // 단계별 최대 수치 (M등급 기준)
 const tierMaxValues = {
@@ -96,15 +98,15 @@ Object.entries(uniqueItemDefs).forEach(([type, items]) => {
 });
 const allUniqueNames = Object.values(uniqueItemDefs).flat().map(u => u.name);
 
-// 룬 최대값
+// 룬 최대값 (1세트당 1개만 적용)
 const runeMaxValues = {
   critRate: 6, atkSpeed: 6, evasion: 6,
   dmgReduce: 12, lifesteal: 12, moveSpeed: 12
 };
 
 // 로컬스토리지 키
-const STORAGE_KEY = 'equipment_calc_v5';
-const STORAGE_KEY_UNIQUE = 'equipment_calc_unique_v5';
+const STORAGE_KEY = 'equipment_calc_v6';
+const STORAGE_KEY_UNIQUE = 'equipment_calc_unique_v6';
 
 // 엑셀 헤더
 const excelHeaders = ['장비종류', '단계', '유니크', '고유옵션', '치확', '공속', '회피', '받뎀감', '흡혈', '이속', '악마', '보스', '영장', '치피', '전공', '체력', '방어'];
@@ -114,67 +116,6 @@ const headerToOptionId = {
   '악마': 'demon', '보스': 'boss', '영장': 'primate',
   '치피': 'critDmg', '전공': 'totalAtk', '체력': 'health', '방어': 'depend'
 };
-
-const GRADE_COMBINATIONS = [
-  ['M','M','M','M'],
-  ['M','M','M','SS'],
-  ['M','M','M','S'],
-  ['M','M','M','A'],
-  ['M','M','M','B'],
-  ['M','M','M','C'],
-  ['M','M','SS','SS'],
-  ['M','M','SS','S'],
-  ['M','M','SS','A'],
-  ['M','M','SS','B'],
-  ['M','M','SS','C'],
-  ['M','M','S','S'],
-  ['M','M','S','A'],
-  ['M','M','S','B'],
-  ['M','M','S','C'],
-  ['M','M','A','A'],
-  ['M','M','A','B'],
-  ['M','M','A','C'],
-  ['M','M','B','B'],
-  ['M','M','B','C'],
-  ['M','M','C','C'],
-  ['M','SS','SS','SS'],
-  ['M','SS','SS','S'],
-  ['M','SS','SS','A'],
-  ['M','SS','SS','B'],
-  ['M','SS','SS','C'],
-  ['M','SS','S','S'],
-  ['M','SS','S','A'],
-  ['M','SS','S','B'],
-  ['M','SS','S','C'],
-  ['M','SS','A','A'],
-  ['M','SS','A','B'],
-  ['M','SS','A','C'],
-  ['M','SS','B','B'],
-  ['M','SS','B','C'],
-  ['M','SS','C','C'],
-  ['M','S','S','S'],
-  ['M','S','S','A'],
-  ['M','S','S','B'],
-  ['M','S','S','C'],
-  ['M','S','A','A'],
-  ['M','S','A','B'],
-  ['M','S','A','C'],
-  ['M','S','B','B'],
-  ['M','S','B','C'],
-  ['M','S','C','C'],
-  ['M','A','A','A'],
-  ['M','A','A','B'],
-  ['M','A','A','C'],
-  ['M','A','B','B'],
-  ['M','A','B','C'],
-  ['M','A','C','C'],
-  ['M','B','B','B'],
-  ['M','B','B','C'],
-  ['M','B','C','C'],
-  ['M','C','C','C']
-];
-
-const inheritanceCache = new Map();
 
 // ===== 유틸리티 함수 =====
 
@@ -196,8 +137,95 @@ const saveToStorage = (key, data) => {
 
 // 옵션의 그룹에 따른 등급별 수치 가져오기
 const getGradeValue = (tier, group, grade) => {
-  if (tier === '유니크') return 0; // 유니크는 계승 불가
+  if (tier === '유니크') return 0;
   return GRADE_VALUES[group]?.[tier]?.[grade] || 0;
+};
+
+// 목표 달성을 위한 최소 등급 찾기
+const findMinGradeForTarget = (tier, group, targetPerSlot) => {
+  if (tier === '유니크') return { grade: '-', value: 0 };
+  
+  // C부터 M까지 검사하여 목표 달성 가능한 최소 등급 찾기
+  for (const grade of [...GRADES].reverse()) {
+    const val = getGradeValue(tier, group, grade);
+    if (val >= targetPerSlot) {
+      return { grade, value: val };
+    }
+  }
+  // M으로도 불가능하면 M 반환
+  return { grade: 'M', value: getGradeValue(tier, group, 'M') };
+};
+
+// ===== 장비별 최적 계승 등급 계산 =====
+// 핵심 로직: 딜러 옵션(종족/치피/전공)은 M등급, 목표 옵션은 최소 등급으로 목표 달성
+const calculateOptimalGradesForItem = (item, targetConfigs, raceId, includeCritDmg, includeTotalAtk) => {
+  if (item.tier === '유니크') {
+    // 유니크는 계승 불가
+    const optionGrades = {};
+    Object.entries(item.options).forEach(([optId, val]) => {
+      optionGrades[optId] = { current: val, upgraded: val, grade: '-' };
+    });
+    return { optionGrades, gradeString: '계승불가', cost: 0, isUnique: true };
+  }
+
+  const optionGrades = {};
+  const gradeList = [];
+  let totalCost = 0;
+
+  // 아이템이 가진 옵션들을 분류 (0도 포함 - M작 가정)
+  const itemOptions = Object.keys(item.options).filter(id => item.options[id] !== undefined);
+  
+  itemOptions.forEach(optId => {
+    const optDef = allOptionTypes.find(o => o.id === optId);
+    if (!optDef) return;
+
+    const currentValue = item.options[optId];
+    let assignedGrade = 'C';
+    let upgradedValue = getGradeValue(item.tier, optDef.group, 'C');
+
+    // 1. 딜러 옵션(종족/치피/전공)은 항상 M등급
+    if (optId === raceId || 
+        (optId === 'critDmg' && includeCritDmg) || 
+        (optId === 'totalAtk' && includeTotalAtk)) {
+      assignedGrade = 'M';
+      upgradedValue = getGradeValue(item.tier, optDef.group, 'M');
+    }
+    // 2. 목표 옵션은 목표 달성을 위한 최소 등급
+    else if (targetConfigs[optId]?.value > 0 && targetConfigs[optId]?.slots > 0) {
+      const targetTotal = targetConfigs[optId].value;
+      const targetSlots = targetConfigs[optId].slots;
+      const runeMax = runeMaxValues[optId] || 0;
+      
+      // 목표 달성에 필요한 슬롯당 수치 (룬 1개 적용 가정)
+      // (슬롯당수치 * 슬롯수) + 룬 >= 목표
+      // 슬롯당수치 >= (목표 - 룬) / 슬롯수
+      const targetPerSlot = Math.ceil((targetTotal - runeMax) / targetSlots);
+      
+      const { grade, value } = findMinGradeForTarget(item.tier, optDef.group, targetPerSlot);
+      assignedGrade = grade;
+      upgradedValue = value;
+    }
+    // 3. 그 외 옵션은 최저 등급 C
+    else {
+      assignedGrade = 'C';
+      upgradedValue = getGradeValue(item.tier, optDef.group, 'C');
+    }
+
+    optionGrades[optId] = {
+      current: currentValue,
+      upgraded: upgradedValue,
+      grade: assignedGrade
+    };
+    gradeList.push(assignedGrade);
+    totalCost += GRADE_COST[assignedGrade] || 0;
+  });
+
+  // 등급 문자열 생성 (정렬: M > SS > S > A > B > C)
+  const gradeOrder = { M: 0, SS: 1, S: 2, A: 3, B: 4, C: 5 };
+  gradeList.sort((a, b) => gradeOrder[a] - gradeOrder[b]);
+  const gradeString = gradeList.join('') || '-';
+
+  return { optionGrades, gradeString, cost: totalCost, isUnique: false };
 };
 
 // ===== 메인 컴포넌트 =====
@@ -257,7 +285,7 @@ const EquipmentCalculator = () => {
       return matchSearch && matchTier;
     });
   }, [items, searchText, filterTier]);
-  
+
   // 더미 데이터 생성 (심연 + 치피+종족+전공+1유효옵션)
   const generateDummyData = useCallback((count) => {
     const newItems = [];
@@ -265,7 +293,7 @@ const EquipmentCalculator = () => {
     const activeBaseOpts = baseOptionTypes.filter(opt => targetConfigs[opt.id]?.value > 0);
 
     for (let i = 0; i < count; i++) {
-      const tier = '심연'; // 모두 심연
+      const tier = '심연';
       const itemType = itemTypes[i % itemTypes.length];
       const options = {};
 
@@ -303,15 +331,18 @@ const EquipmentCalculator = () => {
         item.options.critRate || '', item.options.atkSpeed || '', item.options.evasion || '',
         item.options.dmgReduce || '', item.options.lifesteal || '', item.options.moveSpeed || '',
         item.options.demon || '', item.options.boss || '', item.options.primate || '',
-        item.options.critDmg || '', item.options.totalAtk || ''
+        item.options.critDmg || '', item.options.totalAtk || '', item.options.health || '', item.options.depend || ''
       ];
       rows.push(row.join(','));
     });
-    const blob = new Blob(['\uFEFF' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    link.href = url;
     link.download = `장비목록_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleExcelUpload = (e) => {
@@ -320,100 +351,106 @@ const EquipmentCalculator = () => {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const lines = event.target.result.split(/\r?\n/).filter(l => l.trim());
+        const text = event.target.result;
+        const lines = text.split(/\r?\n/).filter(line => line.trim());
         if (lines.length < 2) { alert('유효한 데이터가 없습니다.'); return; }
         const headers = lines[0].split(',').map(h => h.trim());
-        const typeIdx = headers.indexOf('장비종류');
+        const itemTypeIdx = headers.indexOf('장비종류');
         const tierIdx = headers.indexOf('단계');
         const uniqueIdx = headers.indexOf('유니크');
         const passiveIdx = headers.indexOf('고유옵션');
-        if (typeIdx === -1 || tierIdx === -1) { alert('헤더에 장비종류, 단계 필요'); return; }
-
-        const newItems = [], newUniques = [];
+        if (itemTypeIdx === -1 || tierIdx === -1) { alert('헤더에 "장비종류"와 "단계" 열이 필요합니다.'); return; }
+        const newItems = [], newUniqueItems = [];
         for (let i = 1; i < lines.length; i++) {
-          const vals = lines[i].split(',').map(v => v.trim());
-          if (vals.length < 2) continue;
-          const itemType = vals[typeIdx], tier = vals[tierIdx];
-          const uniqueName = uniqueIdx !== -1 ? vals[uniqueIdx] : '';
-          const passiveValue = passiveIdx !== -1 ? parseInt(vals[passiveIdx]) || 0 : 0;
+          const values = lines[i].split(',').map(v => v.trim());
+          if (values.length < 2) continue;
+          const itemType = values[itemTypeIdx];
+          const tier = values[tierIdx];
+          const uniqueName = uniqueIdx !== -1 ? values[uniqueIdx] : '';
+          const passiveValue = passiveIdx !== -1 ? parseInt(values[passiveIdx]) || 0 : 0;
           if (!itemTypes.includes(itemType)) continue;
-
           const options = {};
-          headers.forEach((h, idx) => {
-            const optId = headerToOptionId[h];
-            if (!optId) return;
-          
-            const raw = vals[idx];
-          
-            // 빈 셀은 옵션 없음
-            if (raw === '') return;
-          
-            const v = Number(raw);
-          
-            // 0 포함한 숫자만 옵션으로 인정
-            if (!Number.isNaN(v)) {
-              options[optId] = v;
-            }
+          headers.forEach((header, idx) => {
+            if (['장비종류', '단계', '유니크', '고유옵션'].includes(header)) return;
+            const optionId = headerToOptionId[header];
+            if (!optionId) return;
+            const value = parseInt(values[idx]);
+            // 0도 허용 (M작 가정), NaN이나 빈값만 제외
+            if (!isNaN(value) && values[idx].trim() !== '') options[optionId] = value;
           });
-
           if (uniqueName && allUniqueNames.includes(uniqueName)) {
-            newUniques.push({ id: Date.now() + i + 10000, itemType, uniqueName, passiveValue, options, selected: false, tier: '유니크' });
-          } else if (['혼돈', '심연'].includes(tier) && Object.keys(options).length > 0) {
-            newItems.push({ id: Date.now() + i, tier, itemType, options });
+            newUniqueItems.push({ id: Date.now() + i + 10000, itemType, uniqueName, passiveValue, options, selected: false, tier: '유니크' });
+          } else if (['혼돈', '심연'].includes(tier)) {
+            if (Object.keys(options).length > 0) {
+              newItems.push({ id: Date.now() + i, tier, itemType, options });
+            }
           }
         }
+        if (newItems.length === 0 && newUniqueItems.length === 0) { alert('유효한 장비 데이터가 없습니다.'); return; }
         if (newItems.length > 0) setItems(prev => [...prev, ...newItems]);
-        if (newUniques.length > 0) setUniqueEquipments(prev => [...prev, ...newUniques]);
+        if (newUniqueItems.length > 0) setUniqueEquipments(prev => [...prev, ...newUniqueItems]);
         setIsTestMode(false);
         setRaceResults(null);
-        alert(`일반 ${newItems.length}개, 유니크 ${newUniques.length}개 추가`);
-      } catch (err) { console.error(err); alert('파싱 오류'); }
+        alert(`일반 ${newItems.length}개, 유니크 ${newUniqueItems.length}개 장비가 추가되었습니다.`);
+      } catch (error) {
+        console.error('Excel parse error:', error);
+        alert('파일 파싱 중 오류가 발생했습니다.');
+      }
     };
     reader.readAsText(file, 'UTF-8');
     e.target.value = '';
   };
 
-  // 타겟 설정 업데이트
-  const updateTargetConfig = (optId, field, value) => {
+  // 타겟 설정
+  const updateTargetValue = (optionId, value) => {
     setTargetConfigs(prev => ({
       ...prev,
-      [optId]: { ...prev[optId], [field]: Math.max(0, parseInt(value) || 0) }
+      [optionId]: { ...prev[optionId], value: Math.min(parseInt(value) || 0, 100) }
+    }));
+    setRaceResults(null);
+  };
+
+  const updateTargetSlots = (optionId, slots) => {
+    setTargetConfigs(prev => ({
+      ...prev,
+      [optionId]: { ...prev[optionId], slots: Math.min(Math.max(parseInt(slots) || 0, 0), 8) }
     }));
     setRaceResults(null);
   };
 
   // 일반 장비 CRUD
-  const toggleNewItemOption = (optId) => {
+  const toggleNewItemOption = (optionId) => {
     setNewItem(prev => {
-      const newOpts = { ...prev.options };
-      if (newOpts[optId] !== undefined) delete newOpts[optId];
-      else {
-        const opt = allOptionTypes.find(o => o.id === optId);
-        newOpts[optId] = tierMaxValues[prev.tier][opt.group];
+      const newOptions = { ...prev.options };
+      if (newOptions[optionId] !== undefined) {
+        delete newOptions[optionId];
+      } else {
+        const opt = allOptionTypes.find(o => o.id === optionId);
+        newOptions[optionId] = tierMaxValues[prev.tier][opt.group];
       }
-      return { ...prev, options: newOpts };
+      return { ...prev, options: newOptions };
     });
   };
 
-  const updateNewItemOption = (optId, value) => {
-    const opt = allOptionTypes.find(o => o.id === optId);
+  const updateNewItemOptionValue = (optionId, value) => {
+    const opt = allOptionTypes.find(o => o.id === optionId);
     const max = tierMaxValues[newItem.tier][opt.group];
-    setNewItem(prev => ({ ...prev, options: { ...prev.options, [optId]: Math.min(parseInt(value) || 0, max) } }));
+    setNewItem(prev => ({ ...prev, options: { ...prev.options, [optionId]: Math.min(parseInt(value) || 0, max) } }));
   };
 
   const updateNewItemTier = (tier) => {
     setNewItem(prev => {
-      const newOpts = {};
+      const newOptions = {};
       Object.keys(prev.options).forEach(optId => {
         const opt = allOptionTypes.find(o => o.id === optId);
-        newOpts[optId] = tierMaxValues[tier][opt.group];
+        newOptions[optId] = tierMaxValues[tier][opt.group];
       });
-      return { ...prev, tier, options: newOpts };
+      return { ...prev, tier, options: newOptions };
     });
   };
 
   const addItem = () => {
-    if (Object.keys(newItem.options).length === 0) { alert('최소 1개 옵션 선택'); return; }
+    if (Object.keys(newItem.options).length === 0) { alert('최소 1개의 옵션을 선택해주세요.'); return; }
     setItems(prev => [...prev, { ...newItem, id: Date.now() }]);
     setNewItem({ tier: '심연', itemType: '무기', options: {} });
     setRaceResults(null);
@@ -425,7 +462,7 @@ const EquipmentCalculator = () => {
   };
 
   const saveEditItem = () => {
-    if (Object.keys(newItem.options).length === 0) { alert('최소 1개 옵션 선택'); return; }
+    if (Object.keys(newItem.options).length === 0) { alert('최소 1개의 옵션을 선택해주세요.'); return; }
     setItems(prev => prev.map(it => it.id === editingItemId ? { ...newItem, id: editingItemId } : it));
     setEditingItemId(null);
     setNewItem({ tier: '심연', itemType: '무기', options: {} });
@@ -440,25 +477,26 @@ const EquipmentCalculator = () => {
   };
 
   const removeItem = (id) => { setItems(prev => prev.filter(it => it.id !== id)); setRaceResults(null); };
-  const clearAllItems = () => { if (confirm('모든 일반 장비 삭제?')) { setItems([]); setRaceResults(null); } };
+  const clearAllItems = () => { if (confirm('모든 일반 장비를 삭제하시겠습니까?')) { setItems([]); setRaceResults(null); } };
 
   // 유니크 장비 CRUD
-  const toggleNewUniqueOption = (optId) => {
+  const toggleNewUniqueOption = (optionId) => {
     setNewUniqueItem(prev => {
-      const newOpts = { ...prev.options };
-      if (newOpts[optId] !== undefined) delete newOpts[optId];
-      else {
-        const opt = allOptionTypes.find(o => o.id === optId);
-        newOpts[optId] = tierMaxValues['유니크'][opt.group];
+      const newOptions = { ...prev.options };
+      if (newOptions[optionId] !== undefined) {
+        delete newOptions[optionId];
+      } else {
+        const opt = allOptionTypes.find(o => o.id === optionId);
+        newOptions[optionId] = tierMaxValues['유니크'][opt.group];
       }
-      return { ...prev, options: newOpts };
+      return { ...prev, options: newOptions };
     });
   };
 
-  const updateNewUniqueOption = (optId, value) => {
-    const opt = allOptionTypes.find(o => o.id === optId);
+  const updateNewUniqueOptionValue = (optionId, value) => {
+    const opt = allOptionTypes.find(o => o.id === optionId);
     const max = tierMaxValues['유니크'][opt.group];
-    setNewUniqueItem(prev => ({ ...prev, options: { ...prev.options, [optId]: Math.min(parseInt(value) || 0, max) } }));
+    setNewUniqueItem(prev => ({ ...prev, options: { ...prev.options, [optionId]: Math.min(parseInt(value) || 0, max) } }));
   };
 
   const updateNewUniqueItemType = (itemType) => {
@@ -512,276 +550,307 @@ const EquipmentCalculator = () => {
     setRaceResults(null);
   };
 
-// 1. 각 장비 내에서 옵션별 최적 등급 할당 (순열 최적화)
-const chooseBestInheritanceForItem = (item, targetConfigs, raceId) => {
-  const optIds = Object.keys(item.options);
-  let bestMapping = { 
-    assignedGrades: {}, 
-    effectiveOptions: {}, 
-    optionGrades: {}, 
-    cost: 0 
-  };
-
-  // 단순화된 로직: 목표 옵션(치확/공속 등)과 종족 옵션에 높은 등급(M)을 우선 배정
-  // 실제 서비스 시에는 GRADE_COMBINATIONS를 순회하며 최적점을 찾음
-  const sortedOptIds = [...optIds].sort((a, b) => {
-    const aPriority = (targetConfigs[a]?.value > 0 ? 10 : 0) + (a === raceId ? 5 : 0);
-    const bPriority = (targetConfigs[b]?.value > 0 ? 10 : 0) + (b === raceId ? 5 : 0);
-    return bPriority - aPriority;
-  });
-
-  // M, M, S, S 등급 순차 배정 (예시 등급 조합)
-  const gradesToAssign = ['M', 'M', 'M', 'M'];
-  
-  sortedOptIds.forEach((optId, idx) => {
-    const grade = gradesToAssign[idx] || 'C';
-    const opt = allOptionTypes.find(o => o.id === optId);
-    const val = getGradeValue(item.tier, opt.group, grade);
-    
-    bestMapping.assignedGrades[optId] = grade;
-    bestMapping.effectiveOptions[optId] = val;
-    bestMapping.optionGrades[optId] = {
-      current: item.options[optId],
-      upgraded: val,
-      grade: grade
-    };
-    bestMapping.cost += GRADE_COST[grade];
-  });
-
-  return bestMapping;
-};
-
-// 2. 전체 조합의 옵션 합산 및 목표 달성 여부 판단
-const calculateOptimalInheritance = useCallback((combination, raceId) => {
-  let totalCost = 0;
-  let raceTotal = 0;
-  let critDmgTotal = 0;
-  let totalAtkTotal = 0;
-  const optionSummary = {}; // 각 기본옵션별 합계
-
-  // 초기화
-  baseOptionTypes.forEach(opt => {
-    optionSummary[opt.id] = { final: 0, usedSlots: 0 };
-  });
-
-  const itemGrades = combination.map(item => {
-    if (item.tier === '유니크') {
-      // 유니크 옵션 합산
-      Object.entries(item.options).forEach(([optId, val]) => {
-        if (optId === raceId) raceTotal += val;
-        else if (optId === 'critDmg') critDmgTotal += val;
-        else if (optId === 'totalAtk') totalAtkTotal += val;
-        else if (optionSummary[optId]) {
-          optionSummary[optId].final += val;
-          optionSummary[optId].usedSlots += 1;
-        }
-      });
-
-      const optionGrades = {};
-      Object.entries(item.options).forEach(([k, v]) => {
-        optionGrades[k] = { current: v, upgraded: v, grade: '-' };
-      });
-      return { item, gradeString: '계승불가', optionGrades, isUnique: true };
-    } else {
-      // 일반 장비 최적 계승 계산
-      const best = chooseBestInheritanceForItem(item, targetConfigs, raceId);
-      
-      Object.entries(best.effectiveOptions).forEach(([optId, val]) => {
-        if (optId === raceId) raceTotal += val;
-        else if (optId === 'critDmg') critDmgTotal += val;
-        else if (optId === 'totalAtk') totalAtkTotal += val;
-        else if (optionSummary[optId]) {
-          optionSummary[optId].final += val;
-          optionSummary[optId].usedSlots += 1;
-        }
-      });
-      
-      totalCost += best.cost;
-      const sortedGrades = Object.values(best.assignedGrades).sort().join('');
-      return { item, gradeString: sortedGrades, optionGrades: best.optionGrades, isUnique: false };
-    }
-  });
-
-  // 목표 달성 상세 계산
-  const optionDetails = {};
-  let allTargetsMet = true;
-
-  baseOptionTypes.forEach(opt => {
-    const target = targetConfigs[opt.id].value;
-    if (target > 0) {
-      const summary = optionSummary[opt.id];
-      const shortage = Math.max(0, target - summary.final);
-      const runeNeeded = Math.min(shortage, runeMaxValues[opt.id]);
-      const finalWithRune = summary.final + runeNeeded;
-      const isMet = finalWithRune >= target && summary.usedSlots <= targetConfigs[opt.id].slots;
-      
-      if (!isMet) allTargetsMet = false;
-
-      optionDetails[opt.id] = {
-        target,
-        final: finalWithRune,
-        fromGear: summary.final,
-        runeNeeded,
-        excess: Math.max(0, finalWithRune - target),
-        usedSlots: summary.usedSlots,
-        targetSlots: targetConfigs[opt.id].slots,
-        shortage: Math.max(0, target - finalWithRune)
-      };
-    }
-  });
-
-  return { itemGrades, raceTotal, critDmgTotal, totalAtkTotal, totalCost, optionDetails, allTargetsMet };
-}, [targetConfigs]);
-
-// 3. 점수 산출 로직
-const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalAtk) => {
-  const res = calculateOptimalInheritance(combination, raceId);
-  
-  if (!res.allTargetsMet) return { ...res, score: -1000000 };
-
-  let score = res.raceTotal * 10000; // 종족치 우선
-  if (withCritDmg) score += res.critDmgTotal * 100;
-  if (withTotalAtk) score += res.totalAtkTotal * 10;
-  score -= res.totalCost; // 동일 수치라면 비용이 낮은 쪽 선택
-
-  return { ...res, score };
-}, [calculateOptimalInheritance]);
-  
-
-  // 최적 조합 탐색
+  // ===== 최적 조합 탐색 =====
   const findBestCombination = useCallback(async (raceId) => {
     setIsCalculating(true);
     setRaceResults(null);
-
     await new Promise(r => setTimeout(r, 10));
 
-    // 1. 선택한 종족 옵션이 있는 장비만 필터링
-    const availableItems = items.filter(item =>
-      !selectedUniqueTypes.includes(item.itemType) &&
-      item.options.hasOwnProperty(raceId)
+    const selectedUniques = uniqueEquipments.filter(u => u.selected);
+    const selectedUniqueTypesList = selectedUniques.map(u => u.itemType);
+
+    // 1. 종족 필터링: 선택한 종족 옵션이 있는 장비만 포함 (0도 허용 - M작 가정)
+    const raceFilteredItems = items.filter(item => 
+      !selectedUniqueTypesList.includes(item.itemType) && 
+      item.options[raceId] !== undefined
     );
 
-    if (availableItems.length === 0 && selectedUniqueItems.length === 0) {
-      alert('선택한 종족 옵션이 있는 장비가 없습니다.');
+    if (raceFilteredItems.length === 0 && selectedUniques.length === 0) {
+      alert('선택한 종족 옵션을 가진 장비가 없습니다.');
       setIsCalculating(false);
       return;
     }
 
-    // 2. 부위별로 그룹화 및 상위 아이템 선별 (성능 최적화)
+    // 활성화된 목표 옵션 목록
+    const activeTargetOpts = Object.keys(targetConfigs).filter(id => 
+      targetConfigs[id].value > 0 && targetConfigs[id].slots > 0
+    );
+
+    // 2. 각 장비에 대해 최적 계승 등급 계산 및 티어 분류
+    const processedItems = raceFilteredItems.map(item => {
+      const gradeInfo = calculateOptimalGradesForItem(item, targetConfigs, raceId, includeCritDmg, includeTotalAtk);
+      
+      // 계승 후 수치 계산
+      const upgradedValues = {};
+      Object.entries(gradeInfo.optionGrades).forEach(([optId, info]) => {
+        upgradedValues[optId] = info.upgraded;
+      });
+
+      // 장비 특성 분석
+      const hasRace = upgradedValues[raceId] !== undefined;
+      const hasCritDmg = upgradedValues.critDmg !== undefined;
+      const hasTotalAtk = upgradedValues.totalAtk !== undefined;
+      
+      // 목표 옵션 보유 개수
+      const targetOptCount = activeTargetOpts.filter(id => upgradedValues[id] !== undefined).length;
+      
+      // 딜러 옵션 점수 (종족은 필수이므로 치피+전공만)
+      const dealerScore = (hasCritDmg ? 2 : 0) + (hasTotalAtk ? 1 : 0);
+      
+      // 종합 점수: 목표옵션 있으면서 딜러옵션 많은 게 최고
+      // 티어1: 목표옵션O + 치피O + 전공O (점수: 30000+)
+      // 티어2: 목표옵션X + 치피O + 전공O (점수: 20000+)
+      // 티어3: 목표옵션O + 치피O or 전공O (점수: 10000+)
+      // 티어4: 나머지
+      let tierScore = 0;
+      if (targetOptCount > 0 && hasCritDmg && hasTotalAtk) tierScore = 30000;
+      else if (targetOptCount === 0 && hasCritDmg && hasTotalAtk) tierScore = 20000;
+      else if (targetOptCount > 0 && (hasCritDmg || hasTotalAtk)) tierScore = 10000;
+      else if (targetOptCount > 0) tierScore = 5000;
+      
+      // 세부 점수: 종족 수치 + 치피 수치 + 전공 수치
+      const detailScore = (upgradedValues[raceId] || 0) * 10 +
+                          (hasCritDmg ? (upgradedValues.critDmg || 0) : 0) * 5 +
+                          (hasTotalAtk ? (upgradedValues.totalAtk || 0) : 0) * 2;
+
+      return {
+        ...item,
+        gradeInfo,
+        upgradedValues,
+        hasRace,
+        hasCritDmg,
+        hasTotalAtk,
+        targetOptCount,
+        dealerScore,
+        score: tierScore + detailScore
+      };
+    });
+
+    // 3. 부위별 그룹화 및 상위 후보 선택
+    const types = itemTypes.filter(t => !selectedUniqueTypesList.includes(t));
     const itemsByType = {};
-    availableItems.forEach(item => {
-      if (!itemsByType[item.itemType]) itemsByType[item.itemType] = [];
-      
-      // 점수 계산: 종족 + 치피 + 전공 + 유효옵션
-      let potScore = 0;
-
-      // 종족 옵션 잠재력
-      if (item.options.hasOwnProperty(raceId)) {
-        potScore += 1000;
-      }
-
-      // 치피 잠재력
-      if (includeCritDmg && item.options.hasOwnProperty('critDmg')) {
-        potScore += 300;
-      }
-
-      // 전공 잠재력
-      if (includeTotalAtk && item.options.hasOwnProperty('totalAtk')) {
-        potScore += 200;
-      }
-
-      // 목표 옵션 잠재 슬롯
-      baseOptionTypes.forEach(opt => {
-        if (
-          targetConfigs[opt.id]?.value > 0 &&
-          item.options.hasOwnProperty(opt.id)
-        ) {
-          potScore += 150;
-        }
-      });
-
-      // 🚨 목표가 아닌 종족 옵션 패널티
-      Object.keys(item.options).forEach(optId => {
-        const isRaceOpt = baseOptionTypes.some(
-          o => o.id === optId && o.group === 'RACE'
-        );
-        if (isRaceOpt && optId !== raceId) {
-          potScore -= 500;
-        }
-      });
-
-      item._score = potScore;
-      
-      itemsByType[item.itemType].push(item);
-    });
-
-    // 부위별 상위 5개만 유지
-    Object.keys(itemsByType).forEach(type => {
-      itemsByType[type].sort((a, b) => b._score - a._score);
-      itemsByType[type] = itemsByType[type].slice(0, 5);
-    });
-
-    const types = Object.keys(itemsByType);
     
-    if (types.length === 0 && selectedUniqueItems.length === 0) {
-      alert('계산할 장비가 없습니다.');
-      setIsCalculating(false);
-      return;
-    }
-
-    // 3. 조합 탐색 (비동기)
-    let bestResult = { score: -Infinity };
-    let bestCombination = [];
-    const indices = new Array(types.length).fill(0);
-    let finished = false;
-
-    const processChunk = () => {
-      const startTime = performance.now();
-
-      while (!finished) {
-        // 현재 조합 생성
-        const combination = [
-          ...selectedUniqueItems,
-          ...types.map((type, i) => itemsByType[type][indices[i]])
-        ].filter(Boolean);
-
-        // 점수 계산
-        const result = calculateScore(combination, raceId, includeCritDmg, includeTotalAtk);
-        if (result.score > bestResult.score) {
-          bestResult = result;
-          bestCombination = [...combination];
-        }
-
-        // 다음 인덱스
-        for (let i = types.length - 1; i >= 0; i--) {
-          indices[i]++;
-          if (indices[i] < itemsByType[types[i]].length) break;
-          if (i === 0) { finished = true; break; }
-          indices[i] = 0;
-        }
-
-        // 16ms마다 UI 양도
-        if (performance.now() - startTime > 16) {
-          setTimeout(processChunk, 0);
-          return;
-        }
+    types.forEach(t => {
+      const list = processedItems.filter(it => it.itemType === t);
+      if (list.length === 0) {
+        itemsByType[t] = [];
+        return;
       }
+      
+      // 점수순 정렬
+      list.sort((a, b) => b.score - a.score);
+      
+      const selected = new Map(); // id -> item
+      
+      // 1. 최상위 티어 (종족+치피+전공+목표옵션) 최대 2개
+      const tier1 = list.filter(it => it.targetOptCount > 0 && it.hasCritDmg && it.hasTotalAtk);
+      tier1.slice(0, 2).forEach(it => selected.set(it.id, it));
+      
+      // 2. 딜러만 (종족+치피+전공, 목표옵션X) 최대 1개
+      const tier2 = list.filter(it => it.targetOptCount === 0 && it.hasCritDmg && it.hasTotalAtk && !selected.has(it.id));
+      tier2.slice(0, 1).forEach(it => selected.set(it.id, it));
+      
+      // 3. 각 목표 옵션별로 해당 옵션을 가진 최고 장비 1개씩
+      activeTargetOpts.forEach(optId => {
+        const bestForOpt = list.find(it => 
+          it.upgradedValues[optId] !== undefined && !selected.has(it.id)
+        );
+        if (bestForOpt) selected.set(bestForOpt.id, bestForOpt);
+      });
+      
+      // 4. 목표옵션 + 치피 (전공X) 조합 1개
+      const tier3a = list.find(it => 
+        it.targetOptCount > 0 && it.hasCritDmg && !it.hasTotalAtk && !selected.has(it.id)
+      );
+      if (tier3a) selected.set(tier3a.id, tier3a);
+      
+      // 5. 목표옵션 + 전공 (치피X) 조합 1개
+      const tier3b = list.find(it => 
+        it.targetOptCount > 0 && !it.hasCritDmg && it.hasTotalAtk && !selected.has(it.id)
+      );
+      if (tier3b) selected.set(tier3b.id, tier3b);
+      
+      // 점수순 재정렬
+      itemsByType[t] = Array.from(selected.values()).sort((a, b) => b.score - a.score);
+    });
 
-      // 완료
-      if (bestCombination.length > 0) {
-        setRaceResults({
-          ...bestResult,
-          combination: bestCombination,
-          selectedRace: raceId
+    // 4. 조합 탐색
+    let best = { score: -Infinity, result: null };
+    const typeKeys = Object.keys(itemsByType);
+
+    const solve = (idx, currentComb) => {
+      if (idx === typeKeys.length) {
+        const fullComb = [...selectedUniques, ...currentComb];
+        
+        // 결과 계산
+        let raceTotal = 0, critDmgTotal = 0, totalAtkTotal = 0;
+        const gearSums = {};
+        const usedSlots = {};
+        
+        baseOptionTypes.forEach(o => { gearSums[o.id] = 0; usedSlots[o.id] = 0; });
+
+        fullComb.forEach(it => {
+          const vals = it.upgradedValues || it.options;
+          Object.entries(vals).forEach(([optId, val]) => {
+            if (optId === raceId) raceTotal += val;
+            else if (optId === 'critDmg') critDmgTotal += val;
+            else if (optId === 'totalAtk') totalAtkTotal += val;
+            else if (gearSums[optId] !== undefined) {
+              gearSums[optId] += val;
+              usedSlots[optId] += 1;
+            }
+          });
         });
-      } else {
-        alert('조건을 만족하는 조합이 없습니다.');
+
+        // 목표 달성 검사 및 점수 계산
+        let allTargetsMet = true;
+        let penalty = 0;
+        let bonus = 0;
+        const optionDetails = {};
+
+        for (const optId of Object.keys(targetConfigs)) {
+          const config = targetConfigs[optId];
+          if (config.value <= 0) continue;
+
+          const slots = usedSlots[optId];
+          const runeMax = runeMaxValues[optId] || 0;
+          const gearOnly = gearSums[optId];
+          
+          // 룬 사용 여부 결정: 계승만으로 목표 달성 가능하면 룬 안 씀
+          let runeVal = 0;
+          let finalVal = gearOnly;
+          
+          if (slots > 0) {
+            if (gearOnly >= config.value) {
+              // 계승만으로 달성 → 룬 불필요
+              runeVal = 0;
+              finalVal = gearOnly;
+            } else if (gearOnly + runeMax >= config.value) {
+              // 계승 + 룬으로 달성 가능 → 필요한 만큼만 룬 사용
+              runeVal = Math.min(runeMax, config.value - gearOnly);
+              finalVal = gearOnly + runeVal;
+            } else {
+              // 룬 최대로 써도 미달
+              runeVal = runeMax;
+              finalVal = gearOnly + runeMax;
+            }
+          }
+
+          // 목표 미달 페널티
+          if (finalVal < config.value) {
+            allTargetsMet = false;
+            penalty += (config.value - finalVal) * 5000;
+          }
+          
+          // 부위 초과 페널티 (강하지만 allTargetsMet은 유지 - 어쩔 수 없이 허용)
+          if (slots > config.slots) {
+            penalty += (slots - config.slots) * 8000;
+          }
+
+          // 부위 절약 보너스 (목표 달성 + 부위 적게 사용)
+          if (finalVal >= config.value && slots <= config.slots && slots > 0) {
+            bonus += (config.slots - slots) * 2000; // 부위 절약 보너스 강화
+          }
+          
+          // 룬 미사용 보너스 (계승만으로 달성)
+          if (finalVal >= config.value && runeVal === 0 && slots > 0) {
+            bonus += 500;
+          }
+
+          const excess = finalVal - config.value;
+
+          optionDetails[optId] = {
+            target: config.value,
+            final: finalVal,
+            fromGear: gearOnly,
+            runeVal,
+            runeUsed: runeVal > 0,
+            usedSlots: slots,
+            targetSlots: config.slots,
+            excess
+          };
+        }
+
+        // 최종 점수: 목표 달성 여부가 최우선
+        // 모든 목표 달성 시에만 딜러 옵션으로 비교
+        const baseScore = allTargetsMet ? 1000000000 : 0;
+        const score = baseScore + 
+                     (raceTotal * 100) + 
+                     (includeCritDmg ? critDmgTotal * 50 : 0) + 
+                     (includeTotalAtk ? totalAtkTotal * 25 : 0) + 
+                     bonus - penalty;
+
+        if (score > best.score) {
+          best = {
+            score,
+            result: {
+              combination: fullComb,
+              raceTotal,
+              critDmgTotal,
+              totalAtkTotal,
+              optionDetails,
+              allTargetsMet
+            }
+          };
+        }
+        return;
       }
-      setIsCalculating(false);
+
+      const currentType = typeKeys[idx];
+      const candidates = itemsByType[currentType];
+      
+      if (candidates.length === 0) {
+        // 해당 부위에 장비가 없으면 스킵
+        solve(idx + 1, currentComb);
+      } else {
+        for (const item of candidates) {
+          solve(idx + 1, [...currentComb, item]);
+        }
+      }
     };
 
-    processChunk();
-  }, [items, selectedUniqueItems, selectedUniqueTypes, targetConfigs, includeCritDmg, includeTotalAtk, calculateScore]);
+    solve(0, []);
+
+    // 5. 결과 설정
+    if (best.result) {
+      const itemGrades = best.result.combination.map(item => {
+        if (item.gradeInfo) {
+          return {
+            item,
+            ...item.gradeInfo
+          };
+        } else {
+          // 유니크
+          const optionGrades = {};
+          Object.entries(item.options).forEach(([optId, val]) => {
+            optionGrades[optId] = { current: val, upgraded: val, grade: '-' };
+          });
+          return {
+            item,
+            optionGrades,
+            gradeString: '계승불가',
+            isUnique: true
+          };
+        }
+      });
+
+      setRaceResults({
+        selectedRace: raceId,
+        combination: best.result.combination,
+        itemGrades,
+        raceTotal: best.result.raceTotal,
+        critDmgTotal: best.result.critDmgTotal,
+        totalAtkTotal: best.result.totalAtkTotal,
+        optionDetails: best.result.optionDetails,
+        allTargetsMet: best.result.allTargetsMet,
+        totalCost: itemGrades.reduce((sum, ig) => sum + (ig.cost || 0), 0)
+      });
+    } else {
+      alert('조합을 찾을 수 없습니다. 장비를 추가해주세요.');
+    }
+
+    setIsCalculating(false);
+  }, [items, uniqueEquipments, targetConfigs, includeCritDmg, includeTotalAtk]);
 
   const handleRaceSelect = (raceId) => {
     if (items.length === 0 && selectedUniqueItems.length === 0) {
@@ -797,92 +866,335 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
   // ===== 렌더링 =====
   return (
     <div className="calc-container">
+      <style>{`
+        .calc-container {
+          min-height: 100vh;
+          background: #f8f9fa;
+          padding: 16px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          color: #333;
+        }
+        .calc-container * { box-sizing: border-box; }
+        .wrapper { max-width: 900px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 24px; }
+        .title { font-size: 24px; font-weight: 700; margin: 0 0 4px; color: #1a1a2e; }
+        .subtitle { color: #666; font-size: 14px; margin: 0; }
+        
+        .section { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .section-title { font-size: 16px; font-weight: 600; margin: 0 0 16px; color: #1a1a2e; display: flex; align-items: center; gap: 8px; }
+        
+        .target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+        .target-box { background: #f8f9fa; border-radius: 8px; padding: 12px; }
+        .target-label { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; }
+        .target-label span { color: #888; font-weight: 400; font-size: 11px; }
+        .target-inputs { display: flex; gap: 8px; }
+        .target-input { flex: 1; }
+        .target-input label { display: block; font-size: 10px; color: #888; margin-bottom: 2px; }
+        .target-input input { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+        .target-input input:focus { outline: none; border-color: #4a90d9; }
+        
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+        .btn { padding: 8px 16px; border-radius: 8px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+        .btn:hover { background: #f0f0f0; }
+        .btn.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        
+        .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+        .form-row > div { flex: 1; min-width: 100px; }
+        .form-row label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; }
+        .form-row select, .form-row input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+        
+        .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
+        .option-btn { padding: 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; text-align: center; transition: all 0.2s; }
+        .option-btn:hover { background: #f5f5f5; }
+        .option-btn.selected { background: #e8f4fd; border-color: #4a90d9; }
+        .option-btn .name { font-size: 12px; font-weight: 500; }
+        .option-btn input { width: 100%; margin-top: 6px; padding: 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; text-align: center; }
+        .option-section-label { font-size: 11px; color: #888; margin: 8px 0 6px; }
+        
+        .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+        .list-header-left { display: flex; align-items: center; gap: 8px; }
+        .list-header-right { display: flex; gap: 6px; }
+        .item-count { color: #888; font-size: 13px; }
+        .toggle-btn, .clear-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 12px; }
+        .clear-btn { color: #e74c3c; border-color: #e74c3c; }
+        
+        .list-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .list-controls input, .list-controls select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+        .list-controls input { width: 150px; }
+        
+        .item-list { max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; }
+        .item-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #eee; }
+        .item-row:last-child { border-bottom: none; }
+        .item-row:hover { background: #f9f9f9; }
+        .item-row-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+        .item-row-right { display: flex; gap: 4px; }
+        .tier-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+        .tier-badge.심연 { background: #e8f4fd; color: #2980b9; }
+        .tier-badge.혼돈 { background: #fef3e2; color: #e67e22; }
+        .item-options { color: #666; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .card-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 11px; }
+        .card-btn:hover { background: #f5f5f5; }
+        
+        .unique-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #eee; }
+        .unique-row:last-child { border-bottom: none; }
+        .unique-row.selected { background: #1a1a2e; color: #fff; }
+        .unique-row.selected .card-btn { background: #333; color: #fff; border-color: #444; }
+        .select-btn { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #ddd; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+        .select-btn.selected { background: #4a90d9; border-color: #4a90d9; color: #fff; }
+        .passive-text { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; }
+        .unique-row.selected .passive-text { background: #444; }
+        
+        .toggle-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; padding: 12px; background: #f8f9fa; border-radius: 8px; }
+        .toggle-label { font-size: 13px; font-weight: 500; }
+        .toggle-btn-sm { padding: 4px 12px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 12px; }
+        .toggle-btn-sm.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        
+        .race-btn-group { display: flex; gap: 8px; margin-bottom: 16px; }
+        .race-btn { flex: 1; padding: 12px; border-radius: 8px; border: 2px solid #ddd; background: #fff; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+        .race-btn:hover { border-color: #4a90d9; }
+        .race-btn.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        .race-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .loading { text-align: center; padding: 40px; }
+        .spinner { width: 40px; height: 40px; border: 3px solid #eee; border-top-color: #4a90d9; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .result-card { background: #f8f9fa; border-radius: 12px; padding: 20px; }
+        .result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .result-badge { background: #1a1a2e; color: #fff; padding: 4px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+        .result-meta { color: #666; font-size: 12px; }
+        
+        .result-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+        .summary-item { background: #fff; padding: 12px 20px; border-radius: 8px; text-align: center; min-width: 80px; }
+        .summary-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+        .summary-value { font-size: 24px; font-weight: 700; color: #1a1a2e; }
+        
+        .sub-title { font-size: 13px; font-weight: 600; color: #666; margin: 16px 0 8px; }
+        
+        .equip-card { background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 8px; border-left: 4px solid #4a90d9; }
+        .equip-card.unique { border-left-color: #9b59b6; }
+        .equip-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .equip-name { font-weight: 600; font-size: 14px; }
+        .grade-tag { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .grade-tag.high { background: #ffe0e0; color: #c0392b; }
+        .grade-tag.mid { background: #fff3cd; color: #856404; }
+        .grade-tag.good { background: #d4edda; color: #155724; }
+        .grade-tag.unique { background: #e8daef; color: #6c3483; }
+        .equip-options { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+        .opt-item { display: flex; align-items: center; gap: 2px; }
+        .opt-name { color: #666; }
+        .opt-val { font-weight: 500; }
+        .opt-upgrade { color: #27ae60; font-weight: 600; }
+        .opt-grade { color: #888; font-size: 10px; margin-left: 2px; }
+        .passive-info { margin-top: 8px; font-size: 11px; color: #9b59b6; }
+        
+        .target-item { background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+        .target-item.achieved { border-left: 4px solid #27ae60; }
+        .target-item.excess { border-left: 4px solid #f39c12; }
+        .target-item.failed { border-left: 4px solid #e74c3c; }
+        .target-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .target-name { font-weight: 600; font-size: 13px; }
+        .target-slots { font-size: 11px; color: #888; background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
+        .target-slots.exceeded { background: #ffe0e0; color: #c0392b; }
+        .target-detail { font-size: 12px; color: #666; }
+        .target-status { font-size: 11px; margin-top: 4px; }
+        .target-status.ok { color: #27ae60; }
+        .target-status.warn { color: #f39c12; }
+        .target-status.err { color: #e74c3c; }
+        
+        .final-box { background: #d4edda; border-radius: 8px; padding: 16px; margin-top: 16px; }
+        .final-box.error { background: #f8d7da; }
+        .final-title { font-size: 14px; font-weight: 600; color: #155724; }
+        .final-box.error .final-title { color: #721c24; }
+        .final-detail { font-size: 12px; color: #155724; margin-top: 4px; }
+        .final-box.error .final-detail { color: #721c24; }
+        
+        .empty-state { text-align: center; padding: 40px; color: #888; }
+        .hint { font-size: 12px; color: #888; margin-top: 8px; }
+        
+        .test-controls { display: flex; gap: 8px; align-items: center; padding: 12px; background: #f0f0f0; border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .test-label { font-size: 12px; color: #666; }
+        
+        .excel-controls { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+        .excel-controls label { cursor: pointer; }
+        .excel-hint { font-size: 11px; color: #888; }
+        
+        @media (max-width: 600px) {
+          .target-grid { grid-template-columns: repeat(2, 1fr); }
+          .race-btn-group { flex-direction: column; }
+          .result-summary { flex-direction: column; }
+        }
+      `}</style>
+
       <div className="wrapper">
         <div className="header">
           <h1 className="title">장비 계승 계산기</h1>
-          <p className="subtitle">목표 수치를 달성하면서 종족 옵션을 최대화하는 조합 + 최적 계승 등급 추천</p>
+          <p className="subtitle">목표 수치를 달성하면서 종족/치피/전공을 최대화하는 조합 + 최적 계승 등급 추천</p>
         </div>
 
         {/* 목표 설정 */}
         <div className="section">
           <h2 className="section-title">목표 설정</h2>
-          <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>각 옵션의 목표 수치와 사용할 부위 수를 설정하세요. (룬 보완 가능)</p>
-          <div className="grid-3">
+          <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>각 옵션의 목표 수치와 사용할 부위 수를 설정하세요. (룬은 1세트에 1개만 적용)</p>
+          <div className="target-grid">
             {baseOptionTypes.map(opt => (
-              <div key={opt.id} className="input-box">
-                <label className="label">{opt.abbr} <span style={{ fontWeight: 400, color: '#888' }}>(룬 최대 {runeMaxValues[opt.id]})</span></label>
-                <div className="input-row">
-                  <input type="number" className="input" placeholder="목표" value={targetConfigs[opt.id].value || ''} onChange={e => updateTargetConfig(opt.id, 'value', e.target.value)} />
-                  <input type="number" className="input" placeholder="부위" value={targetConfigs[opt.id].slots || ''} onChange={e => updateTargetConfig(opt.id, 'slots', e.target.value)} style={{ maxWidth: 60 }} />
+              <div key={opt.id} className="target-box">
+                <div className="target-label">
+                  {opt.abbr}
+                </div>
+                <div className="target-inputs">
+                  <div className="target-input">
+                    <label>목표</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={targetConfigs[opt.id]?.value || ''}
+                      onChange={e => updateTargetValue(opt.id, e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="target-input">
+                    <label>부위</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="8"
+                      value={targetConfigs[opt.id]?.slots || ''}
+                      onChange={e => updateTargetSlots(opt.id, e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* 모드 선택 */}
+        {/* 계산 모드 */}
         <div className="section">
-          <h2 className="section-title">데이터 모드</h2>
-          <div className="btn-group">
-            <button className={`btn ${!isTestMode ? 'active' : ''}`} onClick={() => { setIsTestMode(false); setItems(loadFromStorage(STORAGE_KEY)); setRaceResults(null); }}>실제 데이터</button>
-            <button className={`btn ${isTestMode ? 'active' : ''}`} onClick={() => { setIsTestMode(true); generateDummyData(250); }}>테스트</button>
+          <h2 className="section-title">계산 모드</h2>
+          <div className="btn-row">
+            <button
+              className={`btn ${!isTestMode ? 'active' : ''}`}
+              onClick={() => {
+                setIsTestMode(false);
+                setItems(loadFromStorage(STORAGE_KEY));
+                setUniqueEquipments(loadFromStorage(STORAGE_KEY_UNIQUE));
+                setRaceResults(null);
+              }}
+            >
+              실제 수치 입력
+            </button>
+            <button
+              className={`btn ${isTestMode ? 'active' : ''}`}
+              onClick={() => {
+                setIsTestMode(true);
+                generateDummyData(80);
+              }}
+            >
+              테스트 모드
+            </button>
           </div>
-          {!isTestMode && (
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <label className="btn btn-sm" style={{ cursor: 'pointer' }}>
-                엑셀 업로드 <input type="file" accept=".csv" onChange={handleExcelUpload} style={{ display: 'none' }} />
-              </label>
-              <button className="btn btn-sm" onClick={downloadExcel}>엑셀 다운로드</button>
-              <span className="hint">CSV (UTF-8)</span>
+
+          {isTestMode && (
+            <div className="test-controls">
+              <span className="test-label">더미 생성:</span>
+              <button className="btn btn-sm" onClick={() => generateDummyData(50)}>50개</button>
+              <button className="btn btn-sm" onClick={() => generateDummyData(100)}>100개</button>
+              <button className="btn btn-sm" onClick={() => generateDummyData(200)}>200개</button>
             </div>
           )}
+
+          {!isTestMode && (
+            <div className="excel-controls">
+              <label className="btn btn-sm">
+                엑셀 업로드
+                <input type="file" accept=".csv,.txt" onChange={handleExcelUpload} style={{ display: 'none' }} />
+              </label>
+              <button className="btn btn-sm" onClick={downloadExcel}>엑셀 다운로드</button>
+              <span className="excel-hint">CSV (UTF-8)</span>
+            </div>
+          )}
+
+          <p className="hint">{isTestMode ? '테스트 모드: 심연 + 종족 + 치피 + 전공 + 1유효옵션 더미 데이터' : '실제 수치 입력 모드. 자동 저장됩니다.'}</p>
         </div>
 
         {/* 일반 장비 입력 */}
         <div className="section">
-          <h2 className="section-title">{editingItemId ? '장비 수정' : '일반 장비 추가'}</h2>
+          <h2 className="section-title">{editingItemId ? '일반 장비 수정' : '일반 장비 추가'}</h2>
           <div className="form-row">
             <div>
-              <label className="label" style={{ fontSize: 11, color: '#888' }}>종류</label>
-              <select className="select" value={newItem.itemType} onChange={e => setNewItem(p => ({ ...p, itemType: e.target.value }))}>
+              <label>종류</label>
+              <select value={newItem.itemType} onChange={e => setNewItem(prev => ({ ...prev, itemType: e.target.value }))}>
                 {itemTypes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <label className="label" style={{ fontSize: 11, color: '#888' }}>단계</label>
-              <select className="select" value={newItem.tier} onChange={e => updateNewItemTier(e.target.value)}>
+              <label>단계</label>
+              <select value={newItem.tier} onChange={e => updateNewItemTier(e.target.value)}>
                 <option value="혼돈">혼돈</option>
                 <option value="심연">심연</option>
               </select>
             </div>
           </div>
-          <div className="option-section-title">기본 옵션</div>
+
+          <div className="option-section-label">기본 옵션</div>
           <div className="option-grid">
             {baseOptionTypes.map(opt => {
-              const sel = newItem.options[opt.id] !== undefined;
+              const isSelected = newItem.options[opt.id] !== undefined;
               const max = tierMaxValues[newItem.tier][opt.group];
               return (
-                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewItemOption(opt.id)}>
-                  <div className="option-name">{opt.abbr}</div>
-                  {sel && <input type="number" className="option-input" min="0" max={max} value={newItem.options[opt.id] || ''} onChange={e => updateNewItemOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
-                </button>
+                <div
+                  key={opt.id}
+                  className={`option-btn ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleNewItemOption(opt.id)}
+                >
+                  <div className="name">{opt.abbr}</div>
+                  {isSelected && (
+                    <input
+                      type="number"
+                      min="0"
+                      max={max}
+                      value={newItem.options[opt.id] || ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateNewItemOptionValue(opt.id, e.target.value)}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
-          <div className="option-section-title">딜러 옵션</div>
+
+          <div className="option-section-label">딜러 옵션</div>
           <div className="option-grid">
             {bonusOptionTypes.map(opt => {
-              const sel = newItem.options[opt.id] !== undefined;
+              const isSelected = newItem.options[opt.id] !== undefined;
               const max = tierMaxValues[newItem.tier][opt.group];
               return (
-                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewItemOption(opt.id)}>
-                  <div className="option-name">{opt.abbr}</div>
-                  {sel && <input type="number" className="option-input" min="0" max={max} value={newItem.options[opt.id] || ''} onChange={e => updateNewItemOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
-                </button>
+                <div
+                  key={opt.id}
+                  className={`option-btn ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleNewItemOption(opt.id)}
+                >
+                  <div className="name">{opt.abbr}</div>
+                  {isSelected && (
+                    <input
+                      type="number"
+                      min="0"
+                      max={max}
+                      value={newItem.options[opt.id] || ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateNewItemOptionValue(opt.id, e.target.value)}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
-          <div className="btn-group">
+
+          <div className="btn-row">
             {editingItemId ? (
               <>
                 <button className="btn active" onClick={saveEditItem}>수정 완료</button>
@@ -906,86 +1218,148 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
               {items.length > 0 && <button className="clear-btn" onClick={clearAllItems}>전체 삭제</button>}
             </div>
           </div>
+
           {isListExpanded && (
             <>
-              {items.length > 5 && (
-                <div className="list-controls">
-                  <input className="search-input" placeholder="단계, 장비, 옵션 검색" value={searchText} onChange={e => setSearchText(e.target.value)} />
-                  <select className="filter-select" value={filterTier} onChange={e => setFilterTier(e.target.value)}>
-                    <option value="전체">전체 단계</option>
-                    <option value="혼돈">혼돈</option>
-                    <option value="심연">심연</option>
-                  </select>
-                </div>
-              )}
+              <div className="list-controls">
+                <input
+                  type="text"
+                  placeholder="검색..."
+                  value={searchText}
+                  onChange={e => setSearchText(e.target.value)}
+                />
+                <select value={filterTier} onChange={e => setFilterTier(e.target.value)}>
+                  <option value="전체">전체 단계</option>
+                  <option value="혼돈">혼돈</option>
+                  <option value="심연">심연</option>
+                </select>
+              </div>
+
               {filteredItems.length === 0 ? (
-                <div className="empty-state">{items.length === 0 ? '장비를 추가해주세요' : '검색 결과 없음'}</div>
+                <div className="empty-state">{items.length === 0 ? '장비를 추가해주세요' : '검색 결과가 없습니다'}</div>
               ) : (
                 <div className="item-list">
-                  {filteredItems.map(item => (
-                    <div key={item.id} className="item-row">
-                      <div className="item-row-left">
-                        <span className={`tier-badge ${item.tier}`}>{item.tier}</span>
-                        <span style={{ fontWeight: 500 }}>{item.itemType}</span>
-                        <span className="item-options">
-                          {Object.entries(item.options).map(([k, v]) => `${allOptionTypes.find(o => o.id === k)?.abbr}:${v}`).join(' ')}
-                        </span>
+                  {filteredItems.map(item => {
+                    const optText = Object.entries(item.options)
+                      .map(([id, val]) => `${allOptionTypes.find(o => o.id === id)?.abbr}:${val}`)
+                      .join(' ');
+                    return (
+                      <div key={item.id} className="item-row">
+                        <div className="item-row-left">
+                          <span className={`tier-badge ${item.tier}`}>{item.tier}</span>
+                          <span style={{ fontWeight: 500 }}>{item.itemType}</span>
+                          <span className="item-options">{optText}</span>
+                        </div>
+                        <div className="item-row-right">
+                          <button className="card-btn" onClick={() => startEditItem(item)}>수정</button>
+                          <button className="card-btn" onClick={() => removeItem(item.id)}>삭제</button>
+                        </div>
                       </div>
-                      <div className="item-row-right">
-                        <button className="card-btn" onClick={() => startEditItem(item)}>수정</button>
-                        <button className="card-btn" onClick={() => removeItem(item.id)}>삭제</button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* 유니크 장비 */}
+        {/* 유니크 장비 입력 */}
         <div className="section">
           <h2 className="section-title">
-            {editingUniqueId ? '유니크 수정' : '유니크 장비 추가'}
-            {selectedUniqueItems.length > 0 && <span className="badge selected">{selectedUniqueItems.length}/2 선택</span>}
+            {editingUniqueId ? '유니크 장비 수정' : '유니크 장비 추가'}
+            {selectedUniqueItems.length > 0 && <span style={{ marginLeft: 8, fontSize: 12, color: '#4a90d9' }}>({selectedUniqueItems.length}/2 선택)</span>}
           </h2>
           <div className="form-row">
             <div>
-              <label className="label" style={{ fontSize: 11, color: '#888' }}>부위</label>
-              <select className="select" value={newUniqueItem.itemType} onChange={e => updateNewUniqueItemType(e.target.value)}>
+              <label>부위</label>
+              <select value={newUniqueItem.itemType} onChange={e => updateNewUniqueItemType(e.target.value)}>
                 {Object.keys(uniqueItemDefs).map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <label className="label" style={{ fontSize: 11, color: '#888' }}>장비</label>
-              <select className="select" value={newUniqueItem.uniqueName} onChange={e => setNewUniqueItem(p => ({ ...p, uniqueName: e.target.value, passiveValue: 0 }))}>
+              <label>장비명</label>
+              <select value={newUniqueItem.uniqueName} onChange={e => setNewUniqueItem(prev => ({ ...prev, uniqueName: e.target.value, passiveValue: 0 }))}>
                 {(uniqueItemDefs[newUniqueItem.itemType] || []).map(u => <option key={u.name} value={u.name}>{u.name}</option>)}
               </select>
             </div>
           </div>
+
           {(() => {
             const def = uniqueDefMap[newUniqueItem.uniqueName];
-            return def && (
-              <div className="input-box" style={{ marginBottom: 12 }}>
-                <label className="label">고유: {def.passive} ({def.min}~{def.max}{def.unit})</label>
-                <input type="number" className="input" min={def.min} max={def.max} value={newUniqueItem.passiveValue || ''} onChange={e => setNewUniqueItem(p => ({ ...p, passiveValue: parseInt(e.target.value) || 0 }))} />
+            if (!def) return null;
+            return (
+              <div style={{ background: '#f8f9fa', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#666', marginBottom: 4 }}>
+                  고유옵션: {def.passive} ({def.min}~{def.max}{def.unit})
+                </label>
+                <input
+                  type="number"
+                  min={def.min}
+                  max={def.max}
+                  value={newUniqueItem.passiveValue || ''}
+                  onChange={e => setNewUniqueItem(prev => ({ ...prev, passiveValue: parseInt(e.target.value) || 0 }))}
+                  placeholder={`${def.min}~${def.max}`}
+                  style={{ width: '100%', padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+                />
               </div>
             );
           })()}
-          <div className="option-section-title">옵션 (계승 불가 - 현재 수치)</div>
+
+          <div className="option-section-label">기본 옵션 (계승 불가)</div>
           <div className="option-grid">
-            {[...baseOptionTypes, ...bonusOptionTypes].map(opt => {
-              const sel = newUniqueItem.options[opt.id] !== undefined;
+            {baseOptionTypes.map(opt => {
+              const isSelected = newUniqueItem.options[opt.id] !== undefined;
               const max = tierMaxValues['유니크'][opt.group];
               return (
-                <button key={opt.id} className={`option-btn ${sel ? 'selected' : ''}`} onClick={() => toggleNewUniqueOption(opt.id)}>
-                  <div className="option-name">{opt.abbr}</div>
-                  {sel && <input type="number" className="option-input" min="0" max={max} value={newUniqueItem.options[opt.id] || ''} onChange={e => updateNewUniqueOption(opt.id, e.target.value)} onClick={e => e.stopPropagation()} />}
-                </button>
+                <div
+                  key={opt.id}
+                  className={`option-btn ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleNewUniqueOption(opt.id)}
+                >
+                  <div className="name">{opt.abbr}</div>
+                  {isSelected && (
+                    <input
+                      type="number"
+                      min="0"
+                      max={max}
+                      value={newUniqueItem.options[opt.id] || ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateNewUniqueOptionValue(opt.id, e.target.value)}
+                    />
+                  )}
+                </div>
               );
             })}
           </div>
-          <div className="btn-group">
+
+          <div className="option-section-label">딜러 옵션 (계승 불가)</div>
+          <div className="option-grid">
+            {bonusOptionTypes.map(opt => {
+              const isSelected = newUniqueItem.options[opt.id] !== undefined;
+              const max = tierMaxValues['유니크'][opt.group];
+              return (
+                <div
+                  key={opt.id}
+                  className={`option-btn ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleNewUniqueOption(opt.id)}
+                >
+                  <div className="name">{opt.abbr}</div>
+                  {isSelected && (
+                    <input
+                      type="number"
+                      min="0"
+                      max={max}
+                      value={newUniqueItem.options[opt.id] || ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateNewUniqueOptionValue(opt.id, e.target.value)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="btn-row">
             {editingUniqueId ? (
               <>
                 <button className="btn active" onClick={saveEditUniqueItem}>수정 완료</button>
@@ -1021,7 +1395,7 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                       <div className="item-row-left">
                         <button className={`select-btn ${item.selected ? 'selected' : ''}`} onClick={() => toggleUniqueSelection(item.id)}>{item.selected ? '✓' : '○'}</button>
                         <span style={{ fontWeight: 500 }}>{item.uniqueName}</span>
-                        <span style={{ color: '#888' }}>({item.itemType})</span>
+                        <span style={{ color: item.selected ? '#aaa' : '#888' }}>({item.itemType})</span>
                         {def && <span className="passive-text">{def.passive} {item.passiveValue}{def.unit}</span>}
                       </div>
                       <div className="item-row-right">
@@ -1067,7 +1441,6 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                 <span className="result-badge">{raceNames[raceResults.selectedRace]} 최적 조합</span>
                 {includeCritDmg && <span className="result-meta">+ 치피</span>}
                 {includeTotalAtk && <span className="result-meta">+ 전공</span>}
-                <span className="result-meta">비용: {raceResults.totalCost}</span>
               </div>
 
               <div className="result-summary">
@@ -1094,7 +1467,12 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                 const item = ig.item;
                 const isUnique = ig.isUnique;
                 const def = isUnique ? uniqueDefMap[item.uniqueName] : null;
-                const gradeClass = ig.gradeString.startsWith('MMM') ? 'high' : ig.gradeString.startsWith('MM') ? 'mid' : ig.gradeString === '계승불가' ? 'unique' : 'good';
+                
+                // 등급 태그 색상 결정
+                let gradeClass = 'good';
+                if (ig.gradeString === '계승불가') gradeClass = 'unique';
+                else if (ig.gradeString.startsWith('MMM')) gradeClass = 'high';
+                else if (ig.gradeString.startsWith('MM')) gradeClass = 'mid';
 
                 return (
                   <div key={idx} className={`equip-card ${isUnique ? 'unique' : ''}`}>
@@ -1111,11 +1489,11 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                             <span className="opt-name">{opt?.abbr}:</span>
                             {upgraded ? (
                               <>
-                                <span style={{ textDecoration: 'line-through', color: '#999' }}>{info.current === 0 ? info.upgraded : info.current}</span>
+                                <span style={{ textDecoration: 'line-through', color: '#999' }}>{info.current}</span>
                                 <span className="opt-upgrade">→{info.upgraded}</span>
                               </>
                             ) : (
-                              <span className="opt-val">{info.current === 0 ? info.upgraded : info.current}</span>
+                              <span className="opt-val">{info.current}</span>
                             )}
                             {info.grade !== '-' && <span className="opt-grade">({info.grade})</span>}
                           </span>
@@ -1131,8 +1509,16 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
               {baseOptionTypes.map(opt => {
                 const detail = raceResults.optionDetails[opt.id];
                 if (!detail) return null;
+                
                 const slotExceeded = detail.usedSlots > detail.targetSlots;
-                const status = slotExceeded ? 'failed' : detail.shortage > 0 ? 'failed' : detail.excess > 3 ? 'excess' : 'achieved';
+                const targetNotMet = detail.final < detail.target;
+                const excessWarn = detail.excess > 3 && !targetNotMet && !slotExceeded;
+                
+                let status = 'achieved';
+                if (targetNotMet) status = 'failed';
+                else if (slotExceeded) status = 'excess'; // 부위 초과지만 달성은 함
+                else if (excessWarn) status = 'excess';
+
                 return (
                   <div key={opt.id} className={`target-item ${status}`}>
                     <div className="target-header">
@@ -1143,20 +1529,20 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                       </span>
                     </div>
                     <div className="target-detail">
-                      목표: {detail.target} / 계승: {detail.fromGear}
-                      {detail.runeNeeded > 0 && <span style={{ color: '#1a73e8' }}> + 룬 {detail.runeNeeded}</span>}
-                      {' '}= <strong>{detail.final}</strong>
+                      목표: {detail.target} / 최종: {detail.final}
+                      <div style={{ fontSize: '0.85em', color: '#666' }}>
+                        계승합 {detail.fromGear}
+                        {detail.runeVal > 0 ? ` + 룬 ${detail.runeVal}` : ' (룬 불필요)'}
+                      </div>
                     </div>
-                    {slotExceeded ? (
-                      <div className="target-status err">⚠ 부위 초과: {detail.usedSlots - detail.targetSlots}개</div>
-                    ) : detail.shortage > 0 ? (
-                      <div className="target-status err">⚠ 부족: {detail.shortage}</div>
-                    ) : detail.excess > 3 ? (
-                      <div className="target-status warn">⚠ 초과: +{detail.excess} (3 이내 권장)</div>
-                    ) : detail.excess > 0 ? (
-                      <div className="target-status ok">✓ 달성 (+{detail.excess})</div>
+                    {targetNotMet ? (
+                      <div className="target-status err">✗ 미달: {detail.target - detail.final}</div>
+                    ) : slotExceeded ? (
+                      <div className="target-status warn">⚠ 부위 초과 +{detail.usedSlots - detail.targetSlots} (달성은 함)</div>
+                    ) : excessWarn ? (
+                      <div className="target-status warn">⚠ 초과: +{detail.excess} (부위 절약 권장)</div>
                     ) : (
-                      <div className="target-status ok">✓ 정확히 달성</div>
+                      <div className="target-status ok">✓ 달성 {detail.excess > 0 ? `(+${detail.excess})` : ''}</div>
                     )}
                   </div>
                 );
@@ -1175,7 +1561,7 @@ const calculateScore = useCallback((combination, raceId, withCritDmg, withTotalA
                 ) : (
                   <>
                     <div className="final-title">⚠ 일부 목표 미달성</div>
-                    <div className="final-detail">장비를 추가하거나 부위 수를 조정해보세요.</div>
+                    <div className="final-detail">장비를 추가하거나 목표/부위 수를 조정해보세요.</div>
                   </>
                 )}
               </div>

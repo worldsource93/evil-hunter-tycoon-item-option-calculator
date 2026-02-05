@@ -3,6 +3,7 @@ import './App.css'
 // import EquipmentCalculator2 from './component/EquipmentCalculator2';
 // import EquipmentCalculator3 from './component/EquipmentCalculator3';
 import EquipmentCalculator4 from './component/EquipmentCalculator4';
+// import EquipmentCalculator5 from './component/EquipmentCalculator5';
 
 function App() {
 
@@ -12,6 +13,7 @@ function App() {
       {/* <EquipmentCalculator2 /> */}
       {/* <EquipmentCalculator3 /> */}
       <EquipmentCalculator4 />
+      {/* <EquipmentCalculator5 /> */}
     </div>
   )
 }
