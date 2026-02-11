@@ -870,6 +870,7 @@ const EquipmentCalculator = () => {
         <div className="header">
           <h1 className="title">장비 계승 계산기</h1>
           <p className="subtitle">목표 수치를 달성하면서 종족/치피/전공을 최대화하는 조합 + 최적 계승 등급 추천</p>
+          <img className="hits" alt="Hits" src="https://hits.sh/github.com/worldsource93.svg?view=today-total"></img>
         </div>
 
         {/* 목표 설정 */}
